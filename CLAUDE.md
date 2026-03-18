@@ -13,12 +13,13 @@ AI enriches plan items with live data (description, price, hours) using RAG via 
 
 ## Frontend conventions
 
-- Always use Shadcn/UI components, never raw HTML inputs or buttons
+- Always use Shadcn/UI components: never use raw HTML for UI — always install and use the Shadcn component
 - Tailwind for all styling, no CSS modules or styled-components
 - App Router only — no pages/ directory
 - Server components by default; use "use client" only when necessary (event handlers, hooks, Yjs)
 - Supabase is queried directly via @supabase/ssr in Server Components and route handlers
 - All calls to the FastAPI backend go through /frontend/src/lib/api.ts
+- Server components use fetch() directly, client components use TanStack Query.
 
 ## Backend conventions
 
@@ -44,8 +45,15 @@ AI enriches plan items with live data (description, price, hours) using RAG via 
 
 - When a plan item is added: backend checks ai_attraction_cache first (TTL 24h)
 - Cache miss: call web search API → pass results to AI model → return structured JSON
-- AI model is TBD — backend should make the model configurable via an env variable (AI_MODEL)
+- LLM: Google Gemini (GOOGLE_API_KEY in .env) - model name comes from AI_MODEL env variable, never hardcoded
 - Suggestions: check ai_suggestions_cache (TTL 6h), keyed by hash(destination + preference tags)
+
+## Current working features
+
+- POST /ai/attraction — enriches an attraction with live data
+  - Flow: cache check → Tavily search → Gemini → cache store (TTL 24h)
+  - Files: /backend/app/services/ai_enrichment.py, /backend/app/routes/ai.py
+  - Model: gemini-2.5-flash (set via AI_MODEL in .env)
 
 ## What NOT to do
 
