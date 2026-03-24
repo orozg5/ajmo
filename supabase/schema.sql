@@ -78,6 +78,36 @@ create table friendships (
   created_at timestamptz default now()
 );
 
+-- Places — permanent knowledge base, populated by first user to search
+-- Never expires. Powers autocomplete for all users.
+-- Backend-only writes (service_role). Frontend reads via /places/autocomplete endpoint.
+create table places (
+  id uuid primary key default uuid_generate_v4(),
+  slug text not null,                  -- "{name-slug}-{item_type}", matches ai_attraction_cache key prefix
+  item_type text not null,             -- attraction | restaurant | hotel | transport | activity
+  name text not null,
+  destination text not null,           -- city/region the place belongs to
+  description text,
+  location text,                       -- address or area (e.g. "Champ de Mars, Paris")
+  image_url text,
+  created_at timestamptz default now(),
+  unique (slug, item_type)             -- prevent duplicate entries for same place+type
+);
+
+-- Index for autocomplete prefix queries
+create index places_name_destination_idx on places (destination, item_type, name);
+
+-- Slug alias table: maps raw input slugs → canonical slugs resolved by Gemini
+-- Populated after every LLM call; enables cache hits on subsequent partial/misspelled inputs
+-- Backend-only via service_role (no RLS policies needed)
+create table slug_aliases (
+  raw_slug       text primary key,
+  canonical_slug text not null,
+  created_at     timestamptz default now()
+);
+
+create index idx_slug_aliases_canonical on slug_aliases(canonical_slug);
+
 -- AI cache tables
 create table ai_attraction_cache (
   cache_key text primary key,
@@ -102,6 +132,9 @@ alter table plan_members enable row level security;
 alter table plan_days enable row level security;
 alter table plan_items enable row level security;
 alter table friendships enable row level security;
+alter table places enable row level security;
+-- Note: ai_attraction_cache and ai_suggestions_cache intentionally have NO RLS policies
+-- They are backend-only via service_role key
 
 -- Basic RLS policies (users see their own data)
 create policy "Users can view own profile" on profiles for select using (auth.uid() = id);
@@ -112,3 +145,6 @@ create policy "Plan members can view plan" on plans for select using (
   exists (select 1 from plan_members where plan_id = plans.id and user_id = auth.uid())
 );
 create policy "Owner can modify plan" on plans for all using (auth.uid() = owner_id);
+-- Places is readable by all authenticated users (autocomplete), writable by backend only
+create policy "Authenticated users can read places" on places for select using (auth.role() = 'authenticated');
+-- No insert/update policy for places — only service_role (backend) can write
