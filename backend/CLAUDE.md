@@ -8,7 +8,7 @@
 - Supabase client: import `get_supabase_client()` from `app/db.py` — never call `create_client()` directly in service files
 - Shared constants (VALID_ITEM_TYPES, etc.): define in `app/constants.py`, import from there — never duplicate across files
 - Pydantic response models: define in `app/schemas/responses.py`; all route handlers must declare a typed return annotation using these models
-- Config: `pydantic_settings.BaseSettings` in `app/config.py` reads `.env` automatically; all fields are required with no hardcoded defaults — raises `ValidationError` at startup if any are missing
+- Config: `pydantic_settings.BaseSettings` in `app/config.py` reads `.env` automatically; required fields raise `ValidationError` at startup if missing; optional fields (`GROQ_API_KEY`, `FALLBACK_AI_MODEL`) default to `None`
 - Logging: `logging.basicConfig(level=INFO, ...)` called in `main.py` before `FastAPI()` creation
 - Supabase is accessed via service_role key in backend (bypasses RLS intentionally)
 - `model_dump(mode="json")` required on Pydantic date fields before passing to supabase-py
@@ -35,7 +35,7 @@ Enrichment splits data into two tiers:
 
 - Populated on first enrichment, never expires
 - Stores stable data: name, destination, item_type, description, location, image_url
-- Powers autocomplete: queried on every keystroke (prefix match on name + destination)
+- Powers autocomplete: queried on every keystroke (substring match on name + destination)
 - First user to search for a place seeds it; all subsequent users get autocomplete instantly
 
 **Layer 2 — `ai_attraction_cache` (fresh data, TTL 24h)**
@@ -60,7 +60,9 @@ Enrichment splits data into two tiers:
 4. places table always has stable data; ai_attraction_cache hit → return immediately / miss → re-fetch fresh fields only
 5. If autocomplete returns no results → enrichment fires after 700ms debounce (new place fallback)
 
-**LLM:** Google Gemini (GOOGLE_API_KEY in .env) — model name from AI_MODEL env variable, never hardcoded
+**LLM (primary):** Google Gemini — `GOOGLE_API_KEY` + `AI_MODEL` env vars, never hardcoded
+**LLM (fallback):** Groq — optional `GROQ_API_KEY` + `FALLBACK_AI_MODEL`; activated automatically when Gemini returns a 429/quota error
+**LLM output coercion:** all parsed fields are normalised to their expected type after parsing — list fields (`_LIST_FIELDS`: `tips`, `amenities`) are always `list[str]`; all other fields are always `str`; prevents 500s from the LLM returning arrays for scalar fields
 **Autocomplete endpoint:** GET /places/autocomplete?q=&destination=&item_type=
 
 ## Cache design decisions
@@ -108,9 +110,10 @@ lookup is a single primary key read.
 2. Check slug_aliases for raw_slug → canonical_slug mapping
 3. If alias exists: check ai_attraction_cache[canonical_slug] → HIT: return immediately
 4. If no alias or cache expired: call Gemini with canonical_name in response schema
-5. Build canonical_slug from canonical_name
-6. Upsert places (canonical_slug, canonical_name, stable fields)
-7. Insert ai_attraction_cache (canonical_slug, fresh fields, TTL 24h)
+6. Build canonical_slug from canonical_name
+6b. Check ai_attraction_cache[canonical_slug] — if already cached (different raw input, same place): store alias + return
+7a. Upsert places (canonical_slug, canonical_name, stable fields)
+7b. Insert ai_attraction_cache (canonical_slug, fresh fields, TTL 24h)
 8. Insert slug_aliases (raw_slug → canonical_slug)
 9. Return result
 
@@ -138,7 +141,7 @@ by recording exactly what the user meant after Gemini confirmed it.
     - activity: description, duration, price_range, booking_tips, tips
 
 - Places table + autocomplete — permanent knowledge base for places, powers autocomplete
-  - GET /places/autocomplete?q=&destination=&item_type= — prefix match on name, up to 10 results
+  - GET /places/autocomplete?q=&destination=&item_type= — substring match on name, up to 10 results
   - places table: slug (canonical), item_type, name, destination, description, location, image_url — no TTL, never expires
   - slug_aliases table: raw_slug → canonical_slug mapping written after every Gemini call; enables cache hits for partial/misspelled input without re-calling Gemini
   - Files: /backend/app/services/places.py, /backend/app/routes/places.py

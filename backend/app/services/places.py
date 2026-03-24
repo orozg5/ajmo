@@ -37,7 +37,7 @@ async def autocomplete_places(q: str, destination: str, item_type: str) -> list[
     response = (
         sb.table("places")
         .select("*")
-        .ilike("name", f"{q}%")
+        .ilike("name", f"%{q}%")
         .eq("destination", destination)
         .eq("item_type", item_type)
         .limit(10)

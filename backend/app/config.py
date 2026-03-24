@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic_settings import BaseSettings
 
 
@@ -6,8 +8,11 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str
     TAVILY_API_KEY: str
-    GOOGLE_API_KEY: str
-    AI_MODEL: str  # required — always set in .env, never hardcoded
+    GOOGLE_API_KEY: str      # required — primary LLM provider
+    AI_MODEL: str            # required — primary model name (Gemini model)
+    # Optional — fallback when Gemini quota is exhausted
+    GROQ_API_KEY: Optional[str] = None
+    FALLBACK_AI_MODEL: Optional[str] = None
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

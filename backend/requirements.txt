@@ -29,6 +29,7 @@ langchain==1.2.12
 langchain-anthropic==1.4.0
 langchain-core==1.2.19
 langchain-google-genai==4.2.1
+langchain-groq>=0.3.0
 langgraph==1.1.2
 langgraph-checkpoint==4.0.1
 langgraph-prebuilt==1.0.8

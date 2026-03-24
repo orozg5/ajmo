@@ -6,6 +6,7 @@ from typing import Optional
 
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from tavily import AsyncTavilyClient
 
 from app.config import settings
@@ -21,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 
 # ── Per-type configuration ────────────────────────────────────────────────────
+
+# Fields that must be JSON arrays of strings in the LLM response
+_LIST_FIELDS = {"tips", "amenities"}
 
 _SEARCH_QUERY_TEMPLATES = {
     "attraction": "{name} {destination} attraction hours price",
@@ -46,13 +50,18 @@ _FRESH_FIELDS = {
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+_LEADING_ARTICLE_RE = re.compile(r"^(the|a|an)\s+", re.IGNORECASE)
+
 
 def build_cache_key(name: str, destination: str, item_type: str) -> str:
     """
     Generate a deterministic slug used as the primary key in ai_attraction_cache.
     ("Eiffel Tower", "Paris", "attraction") → "eiffel-tower-paris-attraction"
+    ("The Eiffel Tower", "Paris", "attraction") → "eiffel-tower-paris-attraction"
+    Leading articles (the, a, an) are stripped before slugifying so variants map to the same key.
     """
-    raw = f"{name} {destination}".lower()
+    normalized_name = _LEADING_ARTICLE_RE.sub("", name).strip()
+    raw = f"{normalized_name} {destination}".lower()
     slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
     return f"{slug}-{item_type}"
 
@@ -146,7 +155,11 @@ async def search_item(name: str, destination: str, item_type: str) -> str:
 def _build_prompt(name: str, destination: str, item_type: str, search_context: str) -> str:
     """Build a type-aware extraction prompt for the LLM."""
     all_fields = _STABLE_FIELDS + _FRESH_FIELDS[item_type]
-    fields_json = json.dumps({f: "<value or null>" for f in all_fields}, indent=2)
+    schema = {
+        f: ["<item 1>", "<item 2>"] if f in _LIST_FIELDS else "<value or null>"
+        for f in all_fields
+    }
+    fields_json = json.dumps(schema, indent=2)
     return f"""You are a travel information assistant.
 Based on the search results below, extract structured information about this {item_type}.
 
@@ -164,23 +177,41 @@ Rules:
 - location: the address or area (e.g. "Champ de Mars, Paris" or "5 Avenue Anatole France, 75007 Paris").
 - image_url: a direct URL to a representative image if found in the search results; null otherwise.
 - Use null for any field you cannot determine.
-- Array fields must be JSON arrays of strings."""
+- List fields (shown as arrays above) must be JSON arrays of strings, never a single string."""
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    msg = str(exc).upper()
+    return "429" in msg or "RESOURCE_EXHAUSTED" in msg or "RATE_LIMIT" in msg or "QUOTA" in msg
 
 
 async def enrich_with_llm(name: str, destination: str, item_type: str, search_context: str) -> dict:
     """
-    Pass Tavily context to Gemini and extract structured data for the given item type.
-    The model is read from AI_MODEL env var, making it swappable via config.
+    Pass Tavily context to the primary LLM (Gemini) and extract structured data.
+    Falls back to Groq automatically if Gemini hits a quota/rate limit.
     """
     llm = ChatGoogleGenerativeAI(
         model=settings.AI_MODEL,
         google_api_key=settings.GOOGLE_API_KEY,
-        temperature=0,  # deterministic output for structured extraction
+        temperature=0,
+        max_retries=0,  # fail fast — our fallback handles retries
     )
 
     prompt = _build_prompt(name, destination, item_type, search_context)
 
-    response = await llm.ainvoke([HumanMessage(content=prompt)])
+    try:
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
+    except Exception as exc:
+        if _is_quota_error(exc) and settings.GROQ_API_KEY and settings.FALLBACK_AI_MODEL:
+            logger.warning("Gemini quota hit — retrying with Groq fallback")
+            fallback_llm = ChatGroq(
+                model=settings.FALLBACK_AI_MODEL,
+                groq_api_key=settings.GROQ_API_KEY,
+                temperature=0,
+            )
+            response = await fallback_llm.ainvoke([HumanMessage(content=prompt)])
+        else:
+            raise
     raw_text: str = response.content
 
     # Step 1: strip any markdown fences the model may add despite instructions
@@ -205,6 +236,24 @@ async def enrich_with_llm(name: str, destination: str, item_type: str, search_co
     # Ensure all expected keys exist (fill missing optional ones with None)
     for key in _STABLE_FIELDS + _FRESH_FIELDS[item_type]:
         parsed.setdefault(key, None)
+
+    # Coerce all fields to their expected types based on schema
+    for key in list(parsed.keys()):
+        value = parsed[key]
+        if value is None:
+            continue
+        if key in _LIST_FIELDS:
+            # Expected: list[str]
+            if isinstance(value, list):
+                parsed[key] = [str(v) for v in value if v is not None]
+            else:
+                parsed[key] = [str(value)]
+        else:
+            # Expected: str
+            if isinstance(value, list):
+                parsed[key] = ", ".join(str(v) for v in value if v is not None) or None
+            elif not isinstance(value, str):
+                parsed[key] = str(value)
 
     return parsed
 
@@ -256,6 +305,15 @@ async def get_enriched_data(name: str, destination: str, item_type: str) -> dict
     # Step 6: build canonical slug from the name Gemini confirmed
     canonical_name = data.get("canonical_name") or name
     canonical_slug = build_cache_key(canonical_name, destination, item_type)
+
+    # Step 6b: canonical slug may already be cached (different raw input, same place)
+    existing_cache = await get_cached_attraction(canonical_slug)
+    if existing_cache is not None:
+        await store_slug_alias(raw_slug, canonical_slug)
+        stable = await get_place_by_slug(canonical_slug, item_type)
+        if stable:
+            return {**stable, **existing_cache}
+        return existing_cache
 
     # Step 7a: upsert stable fields into the permanent places table
     stable_payload = {
