@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
@@ -9,7 +9,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { type EnrichedItem } from "@/lib/api";
 import { useItemEnrichment } from "@/hooks/useItemEnrichment";
-import { useState } from "react";
 
 const ITEM_TYPES = [
   { value: "attraction", label: "Attraction", placeholder: "e.g. Eiffel Tower" },
@@ -37,9 +36,10 @@ const FIELD_LABELS: Partial<Record<keyof EnrichedItem, string>> = {
 
 interface Props {
   destination: string;
+  onEnrich?: (item: EnrichedItem, name: string, itemType: string) => void;
 }
 
-export default function ItemSearch({ destination }: Props) {
+export default function ItemSearch({ destination, onEnrich }: Props) {
   const [itemType, setItemType] = useState<string>("attraction");
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -55,7 +55,7 @@ export default function ItemSearch({ destination }: Props) {
     isPending,
     fetchError,
     handleSelect,
-  } = useItemEnrichment({ destination, itemType });
+  } = useItemEnrichment({ destination, itemType, onEnrich });
 
   const activePlaceholder = ITEM_TYPES.find((t) => t.value === itemType)?.placeholder ?? "Item name";
 

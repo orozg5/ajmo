@@ -7,6 +7,7 @@ import { enrichItem, autocompletePlaces, type EnrichedItem, type PlaceSuggestion
 interface UseItemEnrichmentOptions {
   destination: string;
   itemType: string;
+  onEnrich?: (item: EnrichedItem, name: string, itemType: string) => void;
 }
 
 interface UseItemEnrichmentReturn {
@@ -23,7 +24,7 @@ interface UseItemEnrichmentReturn {
   handleSelect: (s: PlaceSuggestion) => void;
 }
 
-export function useItemEnrichment({ destination, itemType }: UseItemEnrichmentOptions): UseItemEnrichmentReturn {
+export function useItemEnrichment({ destination, itemType, onEnrich }: UseItemEnrichmentOptions): UseItemEnrichmentReturn {
   const [name, setName] = useState("");
   const [result, setResult] = useState<EnrichedItem | null>(null);
   const [isPending, setIsPending] = useState(false);
@@ -47,6 +48,7 @@ export function useItemEnrichment({ destination, itemType }: UseItemEnrichmentOp
     try {
       const data = await enrichItem(itemName, destination, itemType, signal);
       setResult(data);
+      onEnrich?.(data, itemName, itemType);
     } catch (e) {
       if ((e as Error).name !== "AbortError") setFetchError(e as Error);
     } finally {

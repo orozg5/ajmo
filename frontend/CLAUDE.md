@@ -22,10 +22,13 @@
     - Shadcn Form + zod + react-hook-form + useMutation(createPlan) → redirect to /plans/[id] on success
   - owner_id is a temporary form field (hardcoded dev UUID); replaced by auth.uid() when auth lands
 
-- /plans/[id] — plan detail page
+- /plans/[id] — day-by-day itinerary planner
   - Server component: /frontend/src/app/plans/[id]/page.tsx
-  - Fetches plan via getPlan() server-side; passes destination as prop — never re-fetched client-side
-  - Renders <ItemSearch destination={destination} /> when destination is set
+  - Calls getPlan() + initializeDays() in parallel server-side; days are auto-created from plan's date_from/date_to on first load (idempotent)
+  - Client component: /frontend/src/components/ItineraryPlanner.tsx — owns day tabs (Shadcn Tabs), Add day button, wires all mutations
+  - State managed by /frontend/src/hooks/usePlanItinerary.ts — local days state updated optimistically via TanStack Query mutations
+  - Day view: /frontend/src/components/DayView.tsx — item list + ItemSearch add-item section; cancel remounts ItemSearch via key counter to clear input/result
+  - Item card: /frontend/src/components/ItemCard.tsx — collapsible (chevron toggle); collapsed shows title + type badge + location/time; expanded shows AI fields + editable notes textarea (saves on blur via PATCH)
 
 - ItemSearch — AI enrichment UI with autocomplete dropdown, scoped to a plan's destination
   - Client component: /frontend/src/components/ItemSearch.tsx
@@ -43,6 +46,8 @@
   - Result card renders all non-null fields for the selected type
 
 - /frontend/src/lib/api.ts — central API helper for all FastAPI calls
-  - apiFetch<T>() wrapper, Plan interface, CreatePlanPayload, EnrichedItem interface, PlaceSuggestion interface
-  - Exports: createPlan, getPlan, enrichItem(name, destination, item_type, signal?), autocompletePlaces(q, destination, item_type, signal?) — both accept AbortSignal
+  - apiFetch<T>() wrapper — returns `undefined as T` for 204 responses (no JSON parsing); throws on non-ok with detail message
+  - Interfaces: Plan, CreatePlanPayload, EnrichedItem, PlaceSuggestion, PlanItem, PlanDay, AddItemPayload
+  - Itinerary functions: initializeDays, getDays, addDay, removeDay, addItem, removeItem, updateItemNotes
+  - AI functions: enrichItem(name, destination, item_type, signal?), autocompletePlaces(q, destination, item_type, signal?) — both accept AbortSignal
   - Query strings built with URLSearchParams

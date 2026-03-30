@@ -62,3 +62,29 @@ class PlanResponse(BaseModel):
     cover_image_url: Optional[str] = None
     yjs_state: None = None  # never expose binary CRDT to API consumers
     created_at: str
+
+
+# ── Itinerary ─────────────────────────────────────────────────────────────────
+
+
+class PlanItemResponse(BaseModel):
+    id: str
+    plan_id: str
+    day_id: str
+    item_type: str
+    title: str
+    notes: Optional[str] = None
+    location: Optional[str] = None
+    start_time: Optional[str] = None
+    estimated_cost: Optional[float] = None
+    sort_order: Optional[int] = None
+    ai_data: Optional[dict] = None
+
+
+class PlanDayWithItemsResponse(BaseModel):
+    id: str
+    plan_id: str
+    day_number: int
+    date: Optional[str] = None
+    title: Optional[str] = None
+    items: list[PlanItemResponse]

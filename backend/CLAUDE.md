@@ -150,3 +150,11 @@ by recording exactly what the user meant after Gemini confirmed it.
   - Routes: POST /plans (201), GET /plans/{id}, GET /plans?owner_id=, PATCH /plans/{id}, DELETE /plans/{id}
   - Files: /backend/app/routes/plans.py, /backend/app/services/plans.py
   - model_dump(mode="json") required on all Pydantic date fields before passing to supabase-py
+
+- Itinerary — day and item management for a plan
+  - Response models: PlanItemResponse, PlanDayWithItemsResponse — defined in /backend/app/schemas/responses.py
+  - Day routes (prefix /plans, tag itinerary): POST /{plan_id}/days/initialize (idempotent), GET /{plan_id}/days, POST /{plan_id}/days (201), DELETE /{plan_id}/days/{day_id} (204)
+  - Item routes: POST /{plan_id}/days/{day_id}/items (201), PATCH /{plan_id}/items/{item_id} (notes update), DELETE /{plan_id}/items/{item_id} (204)
+  - Files: /backend/app/routes/plan_days.py, /backend/app/routes/plan_items.py, /backend/app/services/plan_days.py, /backend/app/services/plan_items.py
+  - initialize_days is idempotent — checks for existing days first; creates from date_from/date_to range or a single Day 1 if no dates
+  - item_type validated against VALID_ITEM_TYPES from app/constants.py on create
