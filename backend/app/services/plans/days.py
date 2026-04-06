@@ -53,25 +53,16 @@ async def initialize_days(plan_id: str, date_from: date | str | None, date_to: d
 async def list_days_with_items(plan_id: str) -> list[dict]:
     """Return all days for a plan, each with their items embedded, ordered by day_number."""
     supabase = get_supabase_client()
-    days_result = (
+    result = (
         supabase.table("plan_days")
-        .select("*")
+        .select("*, plan_items(*)")
         .eq("plan_id", plan_id)
         .order("day_number")
         .execute()
     )
-    days = days_result.data or []
-
+    days = result.data or []
     for day in days:
-        items_result = (
-            supabase.table("plan_items")
-            .select("*")
-            .eq("day_id", day["id"])
-            .order("sort_order")
-            .execute()
-        )
-        day["items"] = items_result.data or []
-
+        day["items"] = sorted(day.pop("plan_items") or [], key=lambda i: i.get("sort_order") or 0)
     return days
 
 

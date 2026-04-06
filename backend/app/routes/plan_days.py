@@ -1,13 +1,11 @@
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel
 
-from app.schemas.responses import PlanDayWithItemsResponse
-from app.services.plans import get_plan
-from app.services.plan_days import (
+from app.schemas.itinerary import PlanDayCreate, PlanDayWithItemsResponse
+from app.services.plans.crud import get_plan
+from app.services.plans.days import (
     create_day,
     delete_day,
     initialize_days,
@@ -17,11 +15,6 @@ from app.services.plan_days import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/plans", tags=["itinerary"])
-
-
-class DayCreate(BaseModel):
-    day_number: Optional[int] = None  # auto-assigned as max + 1 if omitted
-    date: Optional[str] = None
 
 
 @router.post("/{plan_id}/days/initialize")
@@ -51,7 +44,7 @@ async def list_days_route(plan_id: str) -> list[PlanDayWithItemsResponse]:
 
 
 @router.post("/{plan_id}/days", status_code=201)
-async def create_day_route(plan_id: str, body: DayCreate) -> PlanDayWithItemsResponse:
+async def create_day_route(plan_id: str, body: PlanDayCreate) -> PlanDayWithItemsResponse:
     """Add a new day to the plan. day_number auto-assigned if not provided."""
     try:
         day_number = body.day_number

@@ -1,13 +1,10 @@
 import logging
-from datetime import date
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
 
-from app.schemas.responses import PlanResponse
-from app.services.plans import (
+from app.schemas.plans import PlanCreate, PlanResponse, PlanUpdate
+from app.services.plans.crud import (
     create_plan,
     delete_plan,
     get_plan,
@@ -18,27 +15,6 @@ from app.services.plans import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/plans", tags=["plans"])
-
-
-class PlanCreate(BaseModel):
-    owner_id: str = Field(..., description="UUID of the plan owner")
-    title: str = Field(..., min_length=1, description="Plan title")
-    description: Optional[str] = None
-    destination: Optional[str] = None
-    date_from: Optional[date] = None
-    date_to: Optional[date] = None
-    is_public: bool = False
-    cover_image_url: Optional[str] = None
-
-
-class PlanUpdate(BaseModel):
-    title: Optional[str] = Field(None, min_length=1)
-    description: Optional[str] = None
-    destination: Optional[str] = None
-    date_from: Optional[date] = None
-    date_to: Optional[date] = None
-    is_public: Optional[bool] = None
-    cover_image_url: Optional[str] = None
 
 
 @router.post("", status_code=201)

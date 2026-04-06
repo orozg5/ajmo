@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { type EnrichedItem } from "@/lib/api";
-import { useItemEnrichment } from "@/hooks/useItemEnrichment";
+import { useItemEnrichment } from "../hooks/useItemEnrichment";
 
 const ITEM_TYPES = [
   { value: "attraction", label: "Attraction", placeholder: "e.g. Eiffel Tower" },

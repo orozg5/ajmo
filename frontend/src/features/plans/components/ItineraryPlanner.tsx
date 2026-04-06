@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import DayView from "@/components/DayView";
-import { usePlanItinerary } from "@/hooks/usePlanItinerary";
+import DayView from "./DayView";
+import SuggestionsStrip from "./SuggestionsStrip";
+import { usePlanItinerary } from "../hooks/usePlanItinerary";
 import { type Plan, type PlanDay } from "@/lib/api";
 
 interface Props {
@@ -18,9 +19,7 @@ export default function ItineraryPlanner({ plan, initialDays }: Props) {
     initialDays,
   });
 
-  const [activeTab, setActiveTab] = useState<string>(
-    initialDays[0]?.id ?? "",
-  );
+  const [activeTab, setActiveTab] = useState<string>(initialDays[0]?.id ?? "");
 
   async function handleAddDay() {
     const newDay = await addDay();
@@ -43,6 +42,16 @@ export default function ItineraryPlanner({ plan, initialDays }: Props) {
 
   return (
     <div className="space-y-4">
+      {plan.destination && (
+        <SuggestionsStrip
+          planId={plan.id}
+          userId={plan.owner_id}
+          destination={plan.destination}
+          days={days}
+          onAddItem={addItem}
+          initialSuggestions={plan.suggestions}
+        />
+      )}
       <Tabs value={activeDay?.id ?? ""} onValueChange={setActiveTab}>
         <div className="flex items-center gap-2 flex-wrap">
           <TabsList>

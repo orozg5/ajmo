@@ -22,7 +22,7 @@ interface UsePlanItineraryReturn {
   days: PlanDay[];
   addDay: () => Promise<PlanDay>;
   removeDay: (dayId: string) => void;
-  addItem: (dayId: string, payload: AddItemPayload) => void;
+  addItem: (dayId: string, payload: AddItemPayload) => Promise<PlanItem>;
   removeItem: (dayId: string, itemId: string) => void;
   updateItemNotes: (dayId: string, itemId: string, notes: string | null) => void;
   isLoading: boolean;
@@ -46,25 +46,17 @@ export function usePlanItinerary({ planId, initialDays }: UsePlanItineraryOption
   });
 
   const addItemMutation = useMutation({
-    mutationFn: ({ dayId, payload }: { dayId: string; payload: AddItemPayload }) =>
-      apiAddItem(planId, dayId, payload),
+    mutationFn: ({ dayId, payload }: { dayId: string; payload: AddItemPayload }) => apiAddItem(planId, dayId, payload),
     onSuccess: (newItem: PlanItem, { dayId }: { dayId: string; payload: AddItemPayload }) => {
-      setDays((prev) =>
-        prev.map((d) =>
-          d.id === dayId ? { ...d, items: [...d.items, newItem] } : d,
-        ),
-      );
+      setDays((prev) => prev.map((d) => (d.id === dayId ? { ...d, items: [...d.items, newItem] } : d)));
     },
   });
 
   const removeItemMutation = useMutation({
-    mutationFn: ({ itemId }: { dayId: string; itemId: string }) =>
-      apiRemoveItem(planId, itemId),
+    mutationFn: ({ itemId }: { dayId: string; itemId: string }) => apiRemoveItem(planId, itemId),
     onSuccess: (_: void, { dayId, itemId }: { dayId: string; itemId: string }) => {
       setDays((prev) =>
-        prev.map((d) =>
-          d.id === dayId ? { ...d, items: d.items.filter((item) => item.id !== itemId) } : d,
-        ),
+        prev.map((d) => (d.id === dayId ? { ...d, items: d.items.filter((item) => item.id !== itemId) } : d)),
       );
     },
   });
@@ -94,10 +86,8 @@ export function usePlanItinerary({ planId, initialDays }: UsePlanItineraryOption
     days,
     addDay: () => addDayMutation.mutateAsync(),
     removeDay: (dayId: string) => removeDayMutation.mutate(dayId),
-    addItem: (dayId: string, payload: AddItemPayload) =>
-      addItemMutation.mutate({ dayId, payload }),
-    removeItem: (dayId: string, itemId: string) =>
-      removeItemMutation.mutate({ dayId, itemId }),
+    addItem: (dayId: string, payload: AddItemPayload) => addItemMutation.mutateAsync({ dayId, payload }),
+    removeItem: (dayId: string, itemId: string) => removeItemMutation.mutate({ dayId, itemId }),
     updateItemNotes: (dayId: string, itemId: string, notes: string | null) =>
       updateNotesMutation.mutate({ dayId, itemId, notes }),
     isLoading,

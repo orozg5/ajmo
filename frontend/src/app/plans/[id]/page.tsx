@@ -1,5 +1,5 @@
 import { getPlan, initializeDays } from "@/lib/api";
-import ItineraryPlanner from "@/components/ItineraryPlanner";
+import ItineraryPlanner from "@/features/plans/components/ItineraryPlanner";
 
 export default async function PlanPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

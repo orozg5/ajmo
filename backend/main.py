@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,22 +10,32 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
 
+from app.config import settings
 from app.routes.ai import router as ai_router
 from app.routes.places import router as places_router
 from app.routes.plan_days import router as plan_days_router
 from app.routes.plan_items import router as plan_items_router
 from app.routes.plans import router as plans_router
+from app.routes.users import router as users_router
+from app.services.places.cleanup import start_cache_cleanup
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    await start_cache_cleanup()
+    yield
+
 
 app = FastAPI(
     title="Travel planning app API",
     version="0.1.0",
     description="Backend for the collaborative travel planning app",
+    lifespan=lifespan,
 )
 
-# TODO: drive allow_origins from a CORS_ORIGINS env var before any production deployment
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,6 +47,7 @@ app.include_router(places_router)
 app.include_router(plans_router)
 app.include_router(plan_days_router)
 app.include_router(plan_items_router)
+app.include_router(users_router)
 
 
 @app.get("/health", tags=["meta"])

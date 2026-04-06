@@ -32,6 +32,7 @@ create table plans (
   is_public boolean default false,
   cover_image_url text,
   yjs_state bytea,
+  suggestions jsonb,
   created_at timestamptz default now()
 );
 
@@ -116,13 +117,7 @@ create table ai_attraction_cache (
   expires_at timestamptz
 );
 
-create table ai_suggestions_cache (
-  cache_key text primary key,
-  destination text,
-  suggestions jsonb,
-  fetched_at timestamptz default now(),
-  expires_at timestamptz
-);
+create index if not exists idx_ai_attraction_cache_expires on ai_attraction_cache(expires_at);
 
 -- RLS: enable on all tables
 alter table profiles enable row level security;
@@ -133,8 +128,8 @@ alter table plan_days enable row level security;
 alter table plan_items enable row level security;
 alter table friendships enable row level security;
 alter table places enable row level security;
--- Note: ai_attraction_cache and ai_suggestions_cache intentionally have NO RLS policies
--- They are backend-only via service_role key
+-- Note: ai_attraction_cache intentionally has NO RLS policies
+-- It is backend-only via service_role key
 
 -- Basic RLS policies (users see their own data)
 create policy "Users can view own profile" on profiles for select using (auth.uid() = id);

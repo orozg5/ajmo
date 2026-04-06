@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     # Optional — fallback when Gemini quota is exhausted
     GROQ_API_KEY: Optional[str] = None
     FALLBACK_AI_MODEL: Optional[str] = None
+    # CORS — required; comma-separated list of allowed origins (e.g. http://localhost:3000)
+    CORS_ORIGINS: list[str]
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

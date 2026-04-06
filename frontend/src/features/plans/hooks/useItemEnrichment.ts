@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 
-import { enrichItem, autocompletePlaces, type EnrichedItem, type PlaceSuggestion } from "@/lib/api";
+import { enrichBatch, autocompletePlaces, type EnrichedItem, type PlaceSuggestion } from "@/lib/api";
 
 interface UseItemEnrichmentOptions {
   destination: string;
@@ -24,7 +24,11 @@ interface UseItemEnrichmentReturn {
   handleSelect: (s: PlaceSuggestion) => void;
 }
 
-export function useItemEnrichment({ destination, itemType, onEnrich }: UseItemEnrichmentOptions): UseItemEnrichmentReturn {
+export function useItemEnrichment({
+  destination,
+  itemType,
+  onEnrich,
+}: UseItemEnrichmentOptions): UseItemEnrichmentReturn {
   const [name, setName] = useState("");
   const [result, setResult] = useState<EnrichedItem | null>(null);
   const [isPending, setIsPending] = useState(false);
@@ -35,8 +39,8 @@ export function useItemEnrichment({ destination, itemType, onEnrich }: UseItemEn
 
   const enrichAbortRef = useRef<AbortController | null>(null);
   const autocompleteAbortRef = useRef<AbortController | null>(null);
-  // skipDebounce: set to true before a programmatic setName so enrichment fires at 0ms delay
-  const skipDebounce = useRef(false);
+  // skipDebounceRef: set to true before a programmatic setName so enrichment fires at 0ms delay
+  const skipDebounceRef = useRef(false);
   // justSelectedRef: set to true before a programmatic setName so autocomplete skips the re-query
   const justSelectedRef = useRef(false);
 
@@ -46,7 +50,9 @@ export function useItemEnrichment({ destination, itemType, onEnrich }: UseItemEn
     setIsPending(true);
     setFetchError(null);
     try {
-      const data = await enrichItem(itemName, destination, itemType, signal);
+      const results = await enrichBatch([{ name: itemName, destination, item_type: itemType }], signal);
+      if (!results[0]) throw new Error("enrichBatch returned empty");
+      const data = results[0];
       setResult(data);
       onEnrich?.(data, itemName, itemType);
     } catch (e) {
@@ -100,8 +106,8 @@ export function useItemEnrichment({ destination, itemType, onEnrich }: UseItemEn
     enrichAbortRef.current?.abort();
     enrichAbortRef.current = new AbortController();
     const signal = enrichAbortRef.current.signal;
-    const delay = skipDebounce.current ? 0 : 700;
-    skipDebounce.current = false;
+    const delay = skipDebounceRef.current ? 0 : 700;
+    skipDebounceRef.current = false;
 
     const timer = setTimeout(() => doEnrich(name, signal), delay);
     return () => {
@@ -115,7 +121,7 @@ export function useItemEnrichment({ destination, itemType, onEnrich }: UseItemEn
 
   function handleSelect(s: PlaceSuggestion) {
     justSelectedRef.current = true; // skip autocomplete re-query
-    skipDebounce.current = true; // fire enrichment immediately
+    skipDebounceRef.current = true; // fire enrichment immediately
     setName(s.name);
     setSuggestions([]);
     setShowDropdown(false);

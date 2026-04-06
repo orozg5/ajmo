@@ -4,14 +4,12 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from langchain_core.messages import HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_groq import ChatGroq
 from tavily import AsyncTavilyClient
 
 from app.config import settings
 from app.db import get_supabase_client
-from app.services.places import (
+from app.services.ai.llm import call_llm_with_fallback, parse_llm_json
+from app.services.places.repository import (
     get_place_by_slug,
     resolve_slug_alias,
     store_slug_alias,
@@ -66,15 +64,6 @@ def build_cache_key(name: str, destination: str, item_type: str) -> str:
     return f"{slug}-{item_type}"
 
 
-def _strip_markdown_fences(text: str) -> str:
-    """Strip ```json ... ``` or ``` ... ``` wrappers the LLM may add."""
-    pattern = r"^```(?:json)?\s*\n?(.*?)\n?```\s*$"
-    match = re.search(pattern, text.strip(), re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return text.strip()
-
-
 # ── Cache layer ───────────────────────────────────────────────────────────────
 
 
@@ -83,11 +72,11 @@ async def get_cached_attraction(cache_key: str) -> Optional[dict]:
     Return cached data for cache_key if found and not yet expired.
     Uses server-side gt("expires_at") filter so expired rows are skipped cleanly.
     """
-    sb = get_supabase_client()
+    supabase_client = get_supabase_client()
     now_iso = datetime.now(timezone.utc).isoformat()
 
     result = (
-        sb.table("ai_attraction_cache")
+        supabase_client.table("ai_attraction_cache")
         .select("data")
         .eq("cache_key", cache_key)
         .gt("expires_at", now_iso)
@@ -101,11 +90,11 @@ async def get_cached_attraction(cache_key: str) -> Optional[dict]:
 
 async def store_attraction_cache(cache_key: str, data: dict) -> None:
     """Upsert enriched data into ai_attraction_cache with a 24-hour TTL."""
-    sb = get_supabase_client()
+    supabase_client = get_supabase_client()
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(hours=24)
 
-    sb.table("ai_attraction_cache").upsert(
+    supabase_client.table("ai_attraction_cache").upsert(
         {
             "cache_key": cache_key,
             "data": data,
@@ -180,58 +169,14 @@ Rules:
 - List fields (shown as arrays above) must be JSON arrays of strings, never a single string."""
 
 
-def _is_quota_error(exc: Exception) -> bool:
-    msg = str(exc).upper()
-    return "429" in msg or "RESOURCE_EXHAUSTED" in msg or "RATE_LIMIT" in msg or "QUOTA" in msg
-
-
 async def enrich_with_llm(name: str, destination: str, item_type: str, search_context: str) -> dict:
     """
     Pass Tavily context to the primary LLM (Gemini) and extract structured data.
     Falls back to Groq automatically if Gemini hits a quota/rate limit.
     """
-    llm = ChatGoogleGenerativeAI(
-        model=settings.AI_MODEL,
-        google_api_key=settings.GOOGLE_API_KEY,
-        temperature=0,
-        max_retries=0,  # fail fast — our fallback handles retries
-    )
-
     prompt = _build_prompt(name, destination, item_type, search_context)
-
-    try:
-        response = await llm.ainvoke([HumanMessage(content=prompt)])
-    except Exception as exc:
-        if _is_quota_error(exc) and settings.GROQ_API_KEY and settings.FALLBACK_AI_MODEL:
-            logger.warning("Gemini quota hit — retrying with Groq fallback")
-            fallback_llm = ChatGroq(
-                model=settings.FALLBACK_AI_MODEL,
-                groq_api_key=settings.GROQ_API_KEY,
-                temperature=0,
-            )
-            response = await fallback_llm.ainvoke([HumanMessage(content=prompt)])
-        else:
-            raise
-    raw_text: str = response.content
-
-    # Step 1: strip any markdown fences the model may add despite instructions
-    clean_text = _strip_markdown_fences(raw_text)
-
-    # Step 2: attempt JSON parse
-    try:
-        parsed = json.loads(clean_text)
-    except json.JSONDecodeError:
-        # Fallback: find the first {...} block anywhere in the response
-        match = re.search(r"\{.*\}", clean_text, re.DOTALL)
-        if match:
-            try:
-                parsed = json.loads(match.group())
-            except json.JSONDecodeError as exc:
-                logger.error("LLM returned unparseable JSON. Raw: %s", raw_text)
-                raise ValueError(f"LLM response could not be parsed as JSON: {exc}") from exc
-        else:
-            logger.error("LLM returned no JSON object. Raw: %s", raw_text)
-            raise ValueError("LLM response contained no JSON object")
+    raw_text = await call_llm_with_fallback(prompt, temperature=0)
+    parsed = parse_llm_json(raw_text)
 
     # Ensure all expected keys exist (fill missing optional ones with None)
     for key in _STABLE_FIELDS + _FRESH_FIELDS[item_type]:
@@ -261,9 +206,10 @@ async def enrich_with_llm(name: str, destination: str, item_type: str, search_co
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 
-async def get_enriched_data(name: str, destination: str, item_type: str) -> dict:
+async def get_place_data(name: str, destination: str, item_type: str) -> dict:
     """
-    Full enrichment pipeline — the only function route handlers should call.
+    Unified lookup: slug_aliases → ai_attraction_cache → places → LLM fallback.
+    Used by both enrichment and suggestions. Returns full merged place data.
 
     1. Build a raw slug from user input
     2. Resolve raw slug → canonical slug via slug_aliases (skips Gemini on repeat inputs)

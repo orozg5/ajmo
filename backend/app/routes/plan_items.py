@@ -1,32 +1,19 @@
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel
 
 from app.constants import VALID_ITEM_TYPES
-from app.schemas.responses import PlanItemResponse
-from app.services.plan_items import create_item, delete_item, update_item_notes
+from app.schemas.itinerary import PlanItemCreate, PlanItemNotesUpdate, PlanItemResponse
+from app.services.plans.items import create_item, delete_item, update_item_notes
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/plans", tags=["itinerary"])
 
 
-class ItemCreate(BaseModel):
-    item_type: str
-    title: str
-    notes: Optional[str] = None
-    location: Optional[str] = None
-    start_time: Optional[str] = None
-    estimated_cost: Optional[float] = None
-    sort_order: Optional[int] = None
-    ai_data: Optional[dict] = None
-
-
 @router.post("/{plan_id}/days/{day_id}/items", status_code=201)
-async def create_item_route(plan_id: str, day_id: str, body: ItemCreate) -> PlanItemResponse:
+async def create_item_route(plan_id: str, day_id: str, body: PlanItemCreate) -> PlanItemResponse:
     """Add an item to a day."""
     if body.item_type not in VALID_ITEM_TYPES:
         raise HTTPException(
@@ -42,12 +29,8 @@ async def create_item_route(plan_id: str, day_id: str, body: ItemCreate) -> Plan
         raise HTTPException(status_code=500, detail="Failed to create item")
 
 
-class ItemNotesUpdate(BaseModel):
-    notes: Optional[str] = None
-
-
 @router.patch("/{plan_id}/items/{item_id}")
-async def update_item_notes_route(plan_id: str, item_id: str, body: ItemNotesUpdate) -> PlanItemResponse:
+async def update_item_notes_route(plan_id: str, item_id: str, body: PlanItemNotesUpdate) -> PlanItemResponse:
     """Update the notes field of an item."""
     try:
         return await update_item_notes(item_id, body.notes)

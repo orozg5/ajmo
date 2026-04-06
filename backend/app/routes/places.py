@@ -3,12 +3,12 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from app.constants import VALID_ITEM_TYPES
-from app.schemas.responses import PlaceSuggestionResponse
-from app.services.places import autocomplete_places
+from app.schemas.places import PlaceSuggestionResponse
+from app.services.places.repository import autocomplete_places
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/places", tags=["Places"])
+router = APIRouter(prefix="/places", tags=["places"])
 
 
 @router.get("/autocomplete")

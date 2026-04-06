@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import ItemCard from "@/components/ItemCard";
-import ItemSearch from "@/components/ItemSearch";
-import { type PlanDay, type AddItemPayload, type EnrichedItem } from "@/lib/api";
+import ItemCard from "./ItemCard";
+import ItemSearch from "./ItemSearch";
+import { type PlanDay, type AddItemPayload, type EnrichedItem, type PlanItem } from "@/lib/api";
+import { parseCostFromPriceRange } from "@/lib/utils";
 
 interface PendingItem {
   enrichedItem: EnrichedItem;
@@ -16,7 +17,7 @@ interface Props {
   day: PlanDay;
   planId: string;
   destination: string | null;
-  onAddItem: (dayId: string, payload: AddItemPayload) => void;
+  onAddItem: (dayId: string, payload: AddItemPayload) => Promise<PlanItem>;
   onRemoveItem: (dayId: string, itemId: string) => void;
   onUpdateItemNotes: (itemId: string, notes: string | null) => void;
 }
@@ -40,22 +41,22 @@ export default function DayView({ day, destination, onAddItem, onRemoveItem, onU
     setIsSaving(true);
 
     const aiData = pendingItem.enrichedItem as unknown as Record<string, unknown>;
-    const rawCost = aiData.price_range as string | null | undefined;
-    // Attempt to parse a numeric cost from price_range (e.g. "€29" → 29)
-    const parsedCost = rawCost ? parseFloat(rawCost.replace(/[^0-9.]/g, "")) || undefined : undefined;
-
     const payload: AddItemPayload = {
       item_type: pendingItem.itemType,
       title: pendingItem.name,
-      location: pendingItem.enrichedItem.location ?? undefined,
-      estimated_cost: parsedCost,
+      estimated_cost: parseCostFromPriceRange(aiData.price_range as string | null | undefined),
       ai_data: aiData,
     };
 
-    onAddItem(day.id, payload);
-    setPendingItem(null);
-    setSearchKey((k) => k + 1);
-    setIsSaving(false);
+    try {
+      await onAddItem(day.id, payload);
+      setPendingItem(null);
+      setSearchKey((k) => k + 1);
+    } catch {
+      // keep pending item in place — user can retry
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   const sortedItems = [...day.items].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));

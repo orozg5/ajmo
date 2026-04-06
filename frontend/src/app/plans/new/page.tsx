@@ -1,4 +1,4 @@
-import CreatePlanForm from "@/components/CreatePlanForm";
+import CreatePlanForm from "@/features/plans/components/CreatePlanForm";
 
 export default function NewPlanPage() {
   return (
