@@ -1,11 +1,12 @@
+import asyncio
 import logging
-from typing import Optional
 
 from app.constants import VALID_ITEM_TYPES
 from app.db import get_supabase_client
 from app.services.ai.llm import call_llm_with_fallback, parse_llm_json
-from app.services.ai.enrichment import build_cache_key, get_cached_attraction
+from app.services.ai.enrichment import build_cache_key, get_cached_attraction, get_place_data
 from app.services.places.repository import resolve_slug_alias
+from app.services.plans.destinations import get_destinations_for_plan
 
 logger = logging.getLogger(__name__)
 
@@ -13,10 +14,10 @@ logger = logging.getLogger(__name__)
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _build_suggestions_prompt(
-    destination: str,
+def build_suggestions_prompt(
+    destinations_str: str,
     item_names: list[str],
-    preferences: Optional[dict],
+    preferences: dict | None,
     exclude_names: list[str] | None = None,
 ) -> str:
     prefs = preferences or {}
@@ -26,7 +27,7 @@ def _build_suggestions_prompt(
     notes = prefs.get("custom_notes") or "none"
     existing = ", ".join(item_names) if item_names else "nothing yet"
 
-    prompt = f"""You are a travel assistant. Suggest 5 things to do, see, or eat in {destination}.
+    prompt = f"""You are a travel assistant. Suggest 5 things to do, see, or eat across these destinations: {destinations_str}.
 
 Traveler preferences:
 - Interests: {interests}
@@ -44,34 +45,54 @@ Do NOT suggest any of the already-planned items."""
     prompt += """
 
 Return ONLY valid JSON with no markdown, no explanation:
-{"suggestions": [{"name": "...", "item_type": "attraction|restaurant|hotel|transport|activity", "one_line": "...", "price_hint": "..."}]}
+{"suggestions": [{"name": "...", "item_type": "attraction|restaurant|hotel|transport|activity", "destination_city": "...", "one_line": "...", "price_hint": "..."}]}
 
 Rules:
+- destination_city: must be exactly one of the city names from the destinations list
 - one_line: max 40 chars, e.g. "Modern art · Free entry Thu"
 - price_hint: e.g. "Free", "~€15", "€€", or null
 - item_type must be one of: attraction, restaurant, hotel, transport, activity
 - Suggest a varied mix of types (not all attractions)
-- Suggest well-known, real places"""
+- Suggest well-known, real places
+- Spread suggestions across all provided destinations"""
 
     return prompt
 
 
-async def _enrich_suggestion_metadata(suggestion: dict, destination: str) -> dict:
+async def enrich_suggestion_metadata(
+    suggestion: dict,
+    destination: str,
+    model_state: dict | None = None,
+) -> dict:
     """
-    Zero-token DB check: resolves slug and marks cached=True if the place is already
-    in ai_attraction_cache (not expired). Adds slug and cached fields to the suggestion.
+    Runs the full enrichment pipeline (cache-first) for a suggestion and embeds
+    the result so the frontend can add items without a second LLM call.
     """
     name = suggestion["name"]
     item_type = suggestion["item_type"]
+    try:
+        enriched = await get_place_data(name, destination, item_type, model_state=model_state)
+    except Exception:
+        enriched = None
     raw_slug = build_cache_key(name, destination, item_type)
     canonical_slug = await resolve_slug_alias(raw_slug)
     lookup_slug = canonical_slug if canonical_slug else raw_slug
-    cached_data = await get_cached_attraction(lookup_slug)
     return {
         **suggestion,
         "slug": lookup_slug,
-        "cached": cached_data is not None,
+        "cached": enriched is not None,
+        "enriched": enriched,
     }
+
+
+def format_destinations(destinations: list[dict], fallback: str) -> tuple[str, set[str] | None]:
+    """Build the destinations string and city set used in LLM prompts."""
+    if destinations:
+        return (
+            ", ".join(f"{d['city']} ({d['country']})" for d in destinations),
+            {d["city"] for d in destinations},
+        )
+    return fallback, None
 
 
 # ── plans.suggestions storage ─────────────────────────────────────────────────
@@ -101,8 +122,12 @@ async def save_plan_suggestions(plan_id: str, suggestions: list) -> None:
 # ── LLM call ──────────────────────────────────────────────────────────────────
 
 
-async def _call_llm_for_suggestions(prompt: str, temperature: float = 0.4) -> list[dict]:
-    raw_text = await call_llm_with_fallback(prompt, temperature=temperature)
+async def call_llm_for_suggestions(
+    prompt: str,
+    temperature: float = 0.4,
+    model_state: dict | None = None,
+) -> list[dict]:
+    raw_text = await call_llm_with_fallback(prompt, temperature=temperature, model_state=model_state)
     parsed = parse_llm_json(raw_text)
 
     suggestions = parsed.get("suggestions", [])
@@ -121,6 +146,7 @@ async def _call_llm_for_suggestions(prompt: str, temperature: float = 0.4) -> li
             {
                 "name": str(name),
                 "item_type": str(item_type),
+                "destination_city": str(item["destination_city"]) if item.get("destination_city") else None,
                 "one_line": str(item["one_line"])[:60] if item.get("one_line") else None,
                 "price_hint": str(item["price_hint"]) if item.get("price_hint") else None,
             }
@@ -136,7 +162,7 @@ async def get_suggestions(
     destination: str,
     plan_id: str,
     existing_item_names: list[str],
-    preferences: Optional[dict],
+    preferences: dict | None,
     force_refresh: bool = False,
     exclude_names: list[str] | None = None,
 ) -> list[dict]:
@@ -154,13 +180,23 @@ async def get_suggestions(
             logger.info("Loaded suggestions from plans.suggestions for plan %s", plan_id)
             return saved
 
-    logger.info("Generating suggestions for plan %s (force=%s) — calling LLM", plan_id, force_refresh)
-    prompt = _build_suggestions_prompt(destination, existing_item_names, preferences, exclude_names)
-    suggestions = await _call_llm_for_suggestions(prompt, temperature=0.4)
+    plan_destinations = await get_destinations_for_plan(plan_id)
+    destinations_str, cities = format_destinations(plan_destinations, destination)
 
-    enriched = []
-    for suggestion in suggestions:
-        enriched.append(await _enrich_suggestion_metadata(suggestion, destination))
+    logger.info("Generating suggestions for plan %s (force=%s) — calling LLM", plan_id, force_refresh)
+    model_state: dict = {"use_fallback": False}
+    prompt = build_suggestions_prompt(destinations_str, existing_item_names, preferences, exclude_names)
+    suggestions = await call_llm_for_suggestions(prompt, temperature=0.4, model_state=model_state)
+
+    if cities is not None:
+        suggestions = [s for s in suggestions if s.get("destination_city") in cities]
+
+    enriched = list(
+        await asyncio.gather(*[
+            enrich_suggestion_metadata(s, s.get("destination_city") or destination, model_state=model_state)
+            for s in suggestions
+        ])
+    )
 
     await save_plan_suggestions(plan_id, enriched)
     return enriched
@@ -170,7 +206,7 @@ async def get_next_suggestion(
     plan_id: str,
     destination: str,
     existing_item_names: list[str],
-    preferences: Optional[dict],
+    preferences: dict | None,
     exclude_names: list[str],
 ) -> dict | None:
     """
@@ -188,13 +224,20 @@ async def get_next_suggestion(
                 logger.info("Next suggestion served from plans.suggestions for plan %s", plan_id)
                 return suggestion
 
+    plan_destinations = await get_destinations_for_plan(plan_id)
+    destinations_str, cities = format_destinations(plan_destinations, destination)
+
     logger.info("All saved suggestions exhausted for plan %s — calling LLM", plan_id)
-    prompt = _build_suggestions_prompt(destination, existing_item_names, preferences, exclude_names)
-    new_suggestions = await _call_llm_for_suggestions(prompt, temperature=0.6)
+    prompt = build_suggestions_prompt(destinations_str, existing_item_names, preferences, exclude_names)
+    new_suggestions = await call_llm_for_suggestions(prompt, temperature=0.6)
+
+    if cities is not None:
+        new_suggestions = [s for s in new_suggestions if s.get("destination_city") in cities]
 
     for suggestion in new_suggestions:
         if suggestion.get("name", "").lower() not in exclude_set:
-            enriched = await _enrich_suggestion_metadata(suggestion, destination)
+            dest_for_slug = suggestion.get("destination_city") or destination
+            enriched = await enrich_suggestion_metadata(suggestion, dest_for_slug)
             updated = (saved or []) + [enriched]
             await save_plan_suggestions(plan_id, updated)
             return enriched

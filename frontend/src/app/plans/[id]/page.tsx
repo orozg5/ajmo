@@ -1,11 +1,12 @@
-import { getPlan, initializeDays } from "@/lib/api";
+import { getPlan, initializeDays, getDestinations } from "@/lib/api";
 import ItineraryPlanner from "@/features/plans/components/ItineraryPlanner";
 
 export default async function PlanPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [plan, days] = await Promise.all([
+  const [plan, days, destinations] = await Promise.all([
     getPlan(id),
     initializeDays(id),
+    getDestinations(id),
   ]);
 
   return (
@@ -20,7 +21,7 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
         )}
         {plan.description && <p className="text-sm mt-1">{plan.description}</p>}
       </div>
-      <ItineraryPlanner plan={plan} initialDays={days} />
+      <ItineraryPlanner plan={plan} initialDays={days} destinations={destinations} />
     </main>
   );
 }

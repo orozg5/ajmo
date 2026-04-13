@@ -11,7 +11,7 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 @router.get("/me/preferences")
-async def get_user_preferences(
+async def get_user_preferences_route(
     user_id: str = Query(..., description="UUID of the user"),
 ) -> UserPreferencesResponse:
     try:
@@ -27,7 +27,7 @@ async def get_user_preferences(
 
 
 @router.put("/me/preferences")
-async def put_user_preferences(body: UserPreferencesUpdate) -> UserPreferencesResponse:
+async def put_user_preferences_route(body: UserPreferencesUpdate) -> UserPreferencesResponse:
     try:
         payload = body.model_dump(mode="json", exclude={"user_id"})
         return await upsert_preferences(body.user_id, payload)

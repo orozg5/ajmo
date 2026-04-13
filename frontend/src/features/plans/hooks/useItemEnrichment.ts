@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 
 import { enrichBatch, autocompletePlaces, type EnrichedItem, type PlaceSuggestion } from "@/lib/api";
+import { isAbortError } from "@/lib/utils";
 
 interface UseItemEnrichmentOptions {
   destination: string;
@@ -12,12 +13,12 @@ interface UseItemEnrichmentOptions {
 
 interface UseItemEnrichmentReturn {
   name: string;
-  setName: (name: string) => void;
+  handleNameChange: (value: string) => void;
   suggestions: PlaceSuggestion[];
   showDropdown: boolean;
-  setShowDropdown: React.Dispatch<React.SetStateAction<boolean>>;
+  handleDropdownVisibility: (show: boolean) => void;
   activeIndex: number;
-  setActiveIndex: React.Dispatch<React.SetStateAction<number>>;
+  handleActiveIndexChange: (updater: number | ((prev: number) => number)) => void;
   result: EnrichedItem | null;
   isPending: boolean;
   fetchError: Error | null;
@@ -56,7 +57,7 @@ export function useItemEnrichment({
       setResult(data);
       onEnrich?.(data, itemName, itemType);
     } catch (e) {
-      if ((e as Error).name !== "AbortError") setFetchError(e as Error);
+      if (!isAbortError(e)) setFetchError(e as Error);
     } finally {
       setIsPending(false);
     }
@@ -87,7 +88,7 @@ export function useItemEnrichment({
         setActiveIndex(-1);
       })
       .catch((e) => {
-        if ((e as Error).name !== "AbortError") setSuggestions([]);
+        if (!isAbortError(e)) setSuggestions([]);
       });
 
     return () => autocompleteAbortRef.current?.abort();
@@ -128,14 +129,18 @@ export function useItemEnrichment({
     setActiveIndex(-1);
   }
 
+  const handleNameChange = (value: string) => setName(value);
+  const handleDropdownVisibility = (show: boolean) => setShowDropdown(show);
+  const handleActiveIndexChange = (updater: number | ((prev: number) => number)) => setActiveIndex(updater);
+
   return {
     name,
-    setName,
+    handleNameChange,
     suggestions,
     showDropdown,
-    setShowDropdown,
+    handleDropdownVisibility,
     activeIndex,
-    setActiveIndex,
+    handleActiveIndexChange,
     result,
     isPending,
     fetchError,

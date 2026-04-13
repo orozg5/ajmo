@@ -14,6 +14,7 @@ from app.config import settings
 from app.routes.ai import router as ai_router
 from app.routes.places import router as places_router
 from app.routes.plan_days import router as plan_days_router
+from app.routes.plan_destinations import router as plan_destinations_router
 from app.routes.plan_items import router as plan_items_router
 from app.routes.plans import router as plans_router
 from app.routes.users import router as users_router
@@ -46,6 +47,7 @@ app.include_router(ai_router)
 app.include_router(places_router)
 app.include_router(plans_router)
 app.include_router(plan_days_router)
+app.include_router(plan_destinations_router)
 app.include_router(plan_items_router)
 app.include_router(users_router)
 

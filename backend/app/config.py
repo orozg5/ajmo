@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic_settings import BaseSettings
 
 
@@ -11,8 +9,8 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str      # required — primary LLM provider
     AI_MODEL: str            # required — primary model name (Gemini model)
     # Optional — fallback when Gemini quota is exhausted
-    GROQ_API_KEY: Optional[str] = None
-    FALLBACK_AI_MODEL: Optional[str] = None
+    GROQ_API_KEY: str | None = None
+    FALLBACK_AI_MODEL: str | None = None
     # CORS — required; comma-separated list of allowed origins (e.g. http://localhost:3000)
     CORS_ORIGINS: list[str]
 

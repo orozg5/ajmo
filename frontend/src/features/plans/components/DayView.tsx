@@ -1,34 +1,37 @@
 "use client";
 
 import { useState } from "react";
+
 import { Button } from "@/components/ui/button";
-import ItemCard from "./ItemCard";
-import ItemSearch from "./ItemSearch";
-import { type PlanDay, type AddItemPayload, type EnrichedItem, type PlanItem } from "@/lib/api";
-import { parseCostFromPriceRange } from "@/lib/utils";
+import { type PlanDay, type AddItemPayload, type EnrichedItem, type PlanItem, type DestinationResponse } from "@/lib/api";
+import ItemCard from "@/features/plans/components/ItemCard";
+import ItemSearch from "@/features/plans/components/ItemSearch";
 
 interface PendingItem {
   enrichedItem: EnrichedItem;
   name: string;
   itemType: string;
+  destinationId: string;
 }
 
 interface Props {
   day: PlanDay;
   planId: string;
-  destination: string | null;
+  destinations: DestinationResponse[];
   onAddItem: (dayId: string, payload: AddItemPayload) => Promise<PlanItem>;
   onRemoveItem: (dayId: string, itemId: string) => void;
   onUpdateItemNotes: (itemId: string, notes: string | null) => void;
 }
 
-export default function DayView({ day, destination, onAddItem, onRemoveItem, onUpdateItemNotes }: Props) {
+export default function DayView({ day, destinations, onAddItem, onRemoveItem, onUpdateItemNotes }: Props) {
   const [pendingItem, setPendingItem] = useState<PendingItem | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [searchKey, setSearchKey] = useState(0);
 
-  function handleEnrich(enrichedItem: EnrichedItem, name: string, itemType: string) {
-    setPendingItem({ enrichedItem, name, itemType });
+  function makeHandleEnrich(destinationId: string) {
+    return (enrichedItem: EnrichedItem, name: string, itemType: string) => {
+      setPendingItem({ enrichedItem, name, itemType, destinationId });
+    };
   }
 
   function handleCancel() {
@@ -40,12 +43,13 @@ export default function DayView({ day, destination, onAddItem, onRemoveItem, onU
     if (!pendingItem) return;
     setIsSaving(true);
 
-    const aiData = pendingItem.enrichedItem as unknown as Record<string, unknown>;
+    const aiData = pendingItem.enrichedItem;
     const payload: AddItemPayload = {
       item_type: pendingItem.itemType,
       title: pendingItem.name,
-      estimated_cost: parseCostFromPriceRange(aiData.price_range as string | null | undefined),
       ai_data: aiData,
+      destination_id: pendingItem.destinationId,
+      location: pendingItem.enrichedItem.location ?? undefined,
     };
 
     try {
@@ -60,12 +64,13 @@ export default function DayView({ day, destination, onAddItem, onRemoveItem, onU
   }
 
   const sortedItems = [...day.items].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  const legacyItems = sortedItems.filter((item) => item.destination_id == null);
 
   return (
     <div className="space-y-4">
-      {sortedItems.length > 0 && (
+      {legacyItems.length > 0 && (
         <div className="space-y-3">
-          {sortedItems.map((item) => (
+          {legacyItems.map((item) => (
             <ItemCard
               key={item.id}
               item={item}
@@ -76,29 +81,51 @@ export default function DayView({ day, destination, onAddItem, onRemoveItem, onU
         </div>
       )}
 
-      <div className="pt-2">
-        <p className="text-sm font-medium text-muted-foreground mb-3">Add an item</p>
-        {destination ? (
-          <>
-            <ItemSearch key={searchKey} destination={destination} onEnrich={handleEnrich} />
-            {pendingItem && (
-              <div className="mt-3 flex items-center gap-3">
-                <span className="text-sm text-muted-foreground">
-                  Ready to save <span className="font-medium">{pendingItem.name}</span>
-                </span>
-                <Button size="sm" onClick={handleSave} disabled={isSaving}>
-                  Save to Day {day.day_number}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={handleCancel}>
-                  Cancel
-                </Button>
-              </div>
-            )}
-          </>
-        ) : (
-          <p className="text-sm text-muted-foreground">Set a destination on this plan to add enriched items.</p>
-        )}
-      </div>
+      {destinations.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Set a destination on this plan to add enriched items.</p>
+      ) : (
+        destinations.map((dest) => {
+          const destItems = sortedItems.filter((item) => item.destination_id === dest.id);
+          return (
+            <div key={dest.id} className="space-y-3 pt-2">
+              <p className="text-sm font-medium text-muted-foreground">
+                {dest.city}, {dest.country}
+              </p>
+              {destItems.length > 0 && (
+                <div className="space-y-3">
+                  {destItems.map((item) => (
+                    <ItemCard
+                      key={item.id}
+                      item={item}
+                      onRemove={() => onRemoveItem(day.id, item.id)}
+                      onNotesUpdate={(notes) => onUpdateItemNotes(item.id, notes)}
+                    />
+                  ))}
+                </div>
+              )}
+              <ItemSearch
+                key={`${dest.id}-${searchKey}`}
+                destination={`${dest.city}, ${dest.country}`}
+                destinationId={dest.id}
+                onEnrich={makeHandleEnrich(dest.id)}
+              />
+              {pendingItem?.destinationId === dest.id && (
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-muted-foreground">
+                    Ready to save <span className="font-medium">{pendingItem.name}</span>
+                  </span>
+                  <Button size="sm" onClick={handleSave} disabled={isSaving}>
+                    Save to Day {day.day_number}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={handleCancel}>
+                    Cancel
+                  </Button>
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }

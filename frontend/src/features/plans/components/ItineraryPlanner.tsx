@@ -1,19 +1,21 @@
 "use client";
 
 import { useState } from "react";
+
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import DayView from "./DayView";
-import SuggestionsStrip from "./SuggestionsStrip";
-import { usePlanItinerary } from "../hooks/usePlanItinerary";
-import { type Plan, type PlanDay } from "@/lib/api";
+import { type Plan, type PlanDay, type DestinationResponse } from "@/lib/api";
+import { usePlanItinerary } from "@/features/plans/hooks/usePlanItinerary";
+import DayView from "@/features/plans/components/DayView";
+import SuggestionsStrip from "@/features/plans/components/SuggestionsStrip";
 
 interface Props {
   plan: Plan;
   initialDays: PlanDay[];
+  destinations: DestinationResponse[];
 }
 
-export default function ItineraryPlanner({ plan, initialDays }: Props) {
+export default function ItineraryPlanner({ plan, initialDays, destinations }: Props) {
   const { days, addDay, removeDay, addItem, removeItem, updateItemNotes, isLoading } = usePlanItinerary({
     planId: plan.id,
     initialDays,
@@ -94,7 +96,7 @@ export default function ItineraryPlanner({ plan, initialDays }: Props) {
             <DayView
               day={day}
               planId={plan.id}
-              destination={plan.destination}
+              destinations={destinations.filter((d) => d.days.includes(day.day_number))}
               onAddItem={addItem}
               onRemoveItem={removeItem}
               onUpdateItemNotes={(itemId, notes) => updateItemNotes(day.id, itemId, notes)}

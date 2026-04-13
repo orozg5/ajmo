@@ -12,7 +12,7 @@ router = APIRouter(prefix="/places", tags=["places"])
 
 
 @router.get("/autocomplete")
-async def autocomplete(q: str, destination: str, item_type: str) -> list[PlaceSuggestionResponse]:
+async def autocomplete_places_route(q: str, destination: str, item_type: str) -> list[PlaceSuggestionResponse]:
     """
     Return up to 10 place suggestions whose name prefix-matches q.
     Scoped to destination and item_type.

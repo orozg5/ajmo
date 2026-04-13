@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { enrichBatch, getNextSuggestion, getSuggestions, type AddItemPayload, type AiSuggestion } from "@/lib/api";
-import { parseCostFromPriceRange } from "@/lib/utils";
 
-interface Props {
+import { enrichBatch, getNextSuggestion, getSuggestions, type AddItemPayload, type AiSuggestion, type EnrichedItem } from "@/lib/api";
+import { isAbortError } from "@/lib/utils";
+
+interface UseAiSuggestionsOptions {
   planId: string;
   userId: string;
   destination: string;
@@ -12,9 +13,19 @@ interface Props {
   initialSuggestions?: AiSuggestion[] | null;
 }
 
-export function useAiSuggestions({ planId, userId, destination, onAddItem, initialSuggestions }: Props) {
+interface UseAiSuggestionsReturn {
+  suggestions: AiSuggestion[];
+  isLoading: boolean;
+  error: string | null;
+  refresh: () => void;
+  addingNames: Set<string>;
+  addSuggestion: (suggestion: AiSuggestion, dayId: string) => Promise<void>;
+}
+
+export function useAiSuggestions({ planId, userId, destination, onAddItem, initialSuggestions }: UseAiSuggestionsOptions): UseAiSuggestionsReturn {
   const [suggestions, setSuggestions] = useState<AiSuggestion[]>(initialSuggestions ?? []);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [addingNames, setAddingNames] = useState<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
 
@@ -25,14 +36,16 @@ export function useAiSuggestions({ planId, userId, destination, onAddItem, initi
       abortRef.current = controller;
 
       setIsLoading(true);
+      setError(null);
       try {
         const data = await getSuggestions(planId, userId, forceRefresh, undefined, controller.signal);
         if (!controller.signal.aborted) {
           setSuggestions(data.suggestions);
         }
       } catch (err) {
-        if ((err as Error).name !== "AbortError") {
+        if (!isAbortError(err)) {
           setSuggestions([]);
+          setError("AI suggestions are temporarily unavailable.");
         }
       } finally {
         if (!controller.signal.aborted) {
@@ -60,14 +73,19 @@ export function useAiSuggestions({ planId, userId, destination, onAddItem, initi
     async (suggestion: AiSuggestion, dayId: string) => {
       setAddingNames((prev) => new Set(prev).add(suggestion.name));
       try {
-        const results = await enrichBatch([{ name: suggestion.name, destination, item_type: suggestion.item_type }]);
-        if (!results[0]) throw new Error("enrichBatch returned empty");
-        const aiData = results[0] as unknown as Record<string, unknown>;
+        let aiData: EnrichedItem;
+        if (suggestion.enriched) {
+          aiData = suggestion.enriched;
+        } else {
+          const results = await enrichBatch([{ name: suggestion.name, destination, item_type: suggestion.item_type }]);
+          if (!results[0]) throw new Error("enrichBatch returned empty");
+          aiData = results[0];
+        }
         const payload: AddItemPayload = {
           item_type: suggestion.item_type,
           title: suggestion.name,
-          estimated_cost: parseCostFromPriceRange(aiData.price_range as string | null | undefined),
           ai_data: aiData,
+          location: aiData.location ?? undefined,
         };
         onAddItem(dayId, payload);
 
@@ -102,5 +120,5 @@ export function useAiSuggestions({ planId, userId, destination, onAddItem, initi
     [destination, onAddItem, planId, userId],
   );
 
-  return { suggestions, isLoading, refresh, addingNames, addSuggestion };
+  return { suggestions, isLoading, error, refresh, addingNames, addSuggestion };
 }

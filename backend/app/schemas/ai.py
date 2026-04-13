@@ -1,8 +1,6 @@
 """Pydantic models for AI enrichment and suggestion endpoints."""
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, Field, field_validator
 
 from app.constants import VALID_ITEM_TYPES
@@ -46,32 +44,34 @@ class NextSuggestionRequest(BaseModel):
 
 class EnrichedItemResponse(BaseModel):
     # Stable fields (always present after enrichment)
-    canonical_name: Optional[str] = None
-    description: Optional[str] = None
-    location: Optional[str] = None
-    image_url: Optional[str] = None
+    canonical_name: str | None = None
+    description: str | None = None
+    location: str | None = None
+    image_url: str | None = None
 
     # Per-type fresh fields — all optional so one model covers all five types
-    opening_hours: Optional[str] = None
-    price_range: Optional[str] = None
-    tips: Optional[list[str]] = None
-    cuisine: Optional[str] = None
-    reservation_tips: Optional[str] = None
-    amenities: Optional[list[str]] = None
-    check_in_time: Optional[str] = None
-    booking_tips: Optional[str] = None
-    schedule: Optional[str] = None
-    duration: Optional[str] = None
+    opening_hours: str | None = None
+    price_range: str | None = None
+    tips: list[str] | None = None
+    cuisine: str | None = None
+    reservation_tips: str | None = None
+    amenities: list[str] | None = None
+    check_in_time: str | None = None
+    booking_tips: str | None = None
+    schedule: str | None = None
+    duration: str | None = None
 
 
-class AiSuggestionItem(BaseModel):
+class AiSuggestionItemResponse(BaseModel):
     name: str
     item_type: str
-    one_line: Optional[str] = None
-    price_hint: Optional[str] = None
+    one_line: str | None = None
+    price_hint: str | None = None
     cached: bool = False
-    slug: Optional[str] = None
+    slug: str | None = None
+    destination_city: str | None = None
+    enriched: EnrichedItemResponse | None = None
 
 
 class AiSuggestionsResponse(BaseModel):
-    suggestions: list[AiSuggestionItem]
+    suggestions: list[AiSuggestionItemResponse]

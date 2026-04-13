@@ -10,13 +10,21 @@
 - Shared LLM utilities (fence stripping, quota detection, JSON parsing, LLM call with fallback): define in `app/services/ai/llm.py`, import from there — never duplicate across service files
 - Shared place enrichment orchestrator: `app/services/ai/enrichment.py` — `get_place_data(name, destination, item_type)` is the single entry point for all place lookups (slug alias → cache → Tavily → LLM); routes call this directly — never re-implement inline
 - Background cache cleanup: `app/services/places/cleanup.py` — `start_cache_cleanup()` is called in `main.py` on startup; runs a loop every 6 hours deleting expired rows from `ai_attraction_cache` where `expires_at < now`
-- Pydantic models (request and response): define in `app/schemas/`, one file per domain matching the route domain (`ai.py`, `plans.py`, `itinerary.py`, `places.py`, `users.py`). Request models use a domain prefix (e.g. `PlanCreate`, `PlanDayCreate`, `PlanItemCreate`). Response models end in `Response` (e.g. `PlanResponse`, `PlanItemResponse`). All route handlers must declare a typed return annotation using these models.
+- Pydantic models (request and response): define in `app/schemas/`, one file per domain matching the route domain (`ai.py`, `plans.py`, `itinerary.py`, `places.py`, `users.py`, `destinations.py`). Request models use a domain prefix (e.g. `PlanCreate`, `PlanDayCreate`, `DestinationCreate`). Response models end in `Response` (e.g. `PlanResponse`, `PlanItemResponse`, `AiSuggestionItemResponse`). All route handlers must declare a typed return annotation using these models.
 - Config: `pydantic_settings.BaseSettings` in `app/config.py` reads `.env` automatically; required fields raise `ValidationError` at startup if missing; optional fields (`GROQ_API_KEY`, `FALLBACK_AI_MODEL`) default to `None`; `CORS_ORIGINS` is required — set as a JSON array in `.env` (e.g. `CORS_ORIGINS=["http://localhost:3000"]`)
 - Logging: `logging.basicConfig(level=INFO, ...)` called in `main.py` before `FastAPI()` creation
 - Supabase is accessed via service_role key in backend (bypasses RLS intentionally)
 - `model_dump(mode="json")` required on Pydantic date fields before passing to supabase-py
 - `.limit(1).execute()` — NOT `.maybe_single()` for Supabase single-row queries (supabase-py returns None for the entire result object on no match with maybe_single, not just `.data`)
 - All new backend service/route files must follow supabase-service-pattern SKILL exactly
+- Supabase client variable must always be named `supabase` in all service files — never `sb`, `supabase_client`, or any other alias
+- No underscore-prefixed names (`_foo`, `_BAR`) — Python module privacy is enforced by not importing; use plain names for all module-level constants, helpers, and functions
+- Type hints: use `X | None` union syntax (Python 3.10+) — never `Optional[X]` from `typing`
+- Services return `None` for not-found cases; route handlers raise `HTTPException(404)` — never raise HTTP exceptions from service files
+- All Pydantic request/response schemas go in `app/schemas/` — never define models in route files
+- Route handler functions must be named `{action}_{noun}_route` (e.g. `create_plan_route`, `autocomplete_places_route`) — never bare names
+- Router tags: one distinct tag per route file — `"plans"`, `"days"`, `"items"`, `"destinations"`, `"places"`, `"ai"`, `"users"`; never reuse a tag across two route files
+- `item_type` and other domain-constrained fields must be validated in the Pydantic schema via `@field_validator`, not inline in route handlers — keeps validation co-located with the model and consistent across all endpoints
 
 ## Database
 
@@ -170,23 +178,32 @@ by recording exactly what the user meant after Gemini confirmed it.
 
 - Itinerary — day and item management for a plan
   - Response models: PlanItemResponse, PlanDayWithItemsResponse — defined in /backend/app/schemas/itinerary.py
-  - Day routes (prefix /plans, tag itinerary): POST /{plan_id}/days/initialize (idempotent), GET /{plan_id}/days, POST /{plan_id}/days (201), DELETE /{plan_id}/days/{day_id} (204)
-  - Item routes: POST /{plan_id}/days/{day_id}/items (201), PATCH /{plan_id}/items/{item_id} (notes update), DELETE /{plan_id}/items/{item_id} (204)
+  - Day routes (prefix /plans, tag days): POST /{plan_id}/days/initialize (idempotent), GET /{plan_id}/days, POST /{plan_id}/days (201), DELETE /{plan_id}/days/{day_id} (204)
+  - Item routes (prefix /plans, tag items): POST /{plan_id}/days/{day_id}/items (201), PATCH /{plan_id}/items/{item_id} (notes update), DELETE /{plan_id}/items/{item_id} (204)
   - Files: /backend/app/routes/plan_days.py, /backend/app/routes/plan_items.py, /backend/app/services/plans/days.py, /backend/app/services/plans/items.py
   - initialize_days is idempotent — checks for existing days first; creates from date_from/date_to range or a single Day 1 if no dates
   - item_type validated against VALID_ITEM_TYPES from app/constants.py on create
   - Days-with-items query uses `.select("*, plan_items(*)")` — single join, not N+1 loops; items sorted by `sort_order` in Python after fetch
 
-- AI suggestions — personalised suggestions for a plan's destination
+- AI suggestions — personalised suggestions across all plan destinations
   - POST /ai/suggestions — request: `{ plan_id, user_id, force_refresh?, exclude_names? }`
   - Storage: `plans.suggestions` JSONB column (no separate cache table); loaded in the same query as the plan
+  - Fetches all destinations via `get_destinations_for_plan(plan_id)`; builds a destinations string (e.g. "Zagreb (Croatia), Dubrovnik (Croatia)") included in the LLM prompt so suggestions span all destinations
   - LLM call: temperature=0.4 via `call_llm_with_fallback`; skipped when plans.suggestions is non-null and force_refresh=false
   - Pre-warm: after LLM returns suggestions, each is checked against slug_aliases + ai_attraction_cache (zero tokens); cached=true if found
-  - Response: list of `{ name, item_type, one_line (≤60 chars), price_hint, cached, slug }`; suggestions with invalid item_types are filtered out
-  - POST /ai/suggestions/next — request: `{ plan_id, user_id, exclude_names }`; returns single `AiSuggestionItem`
+  - Response: list of `{ name, item_type, one_line (≤60 chars), price_hint, cached, slug, destination_city }`; suggestions with invalid item_types or destination_city not in the plan's cities are filtered out
+  - POST /ai/suggestions/next — request: `{ plan_id, user_id, exclude_names }`; returns single `AiSuggestionItemResponse`
     - Checks plans.suggestions first (zero tokens); calls LLM with temperature=0.6 only when exhausted
     - Appends new suggestion to plans.suggestions before returning
   - Files: `/backend/app/services/ai/suggestions.py`, `/backend/app/routes/ai.py`
+
+- Plan destinations — multi-destination support per plan
+  - POST /plans/{plan_id}/destinations (201), GET /plans/{plan_id}/destinations, DELETE /plans/{plan_id}/destinations/{destination_id} (204)
+  - Tables: plan_destinations (country, city, sort_order, plan_id), plan_destination_days (destination_id, day_number)
+  - plan_items.destination_id (nullable FK → plan_destinations.id, on delete set null) links items to a destination
+  - plans.destination text column kept as legacy fallback — no longer written by new code
+  - DestinationResponse and DestinationCreate defined in /backend/app/schemas/destinations.py
+  - Files: /backend/app/routes/plan_destinations.py, /backend/app/services/plans/destinations.py
 
 - User preferences — per-user travel preferences used to personalise AI suggestions
   - GET /users/me/preferences?user_id= — returns preferences dict or 404

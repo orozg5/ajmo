@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { type EnrichedItem } from "@/lib/api";
-import { useItemEnrichment } from "../hooks/useItemEnrichment";
+import { useItemEnrichment } from "@/features/plans/hooks/useItemEnrichment";
 
 const ITEM_TYPES = [
   { value: "attraction", label: "Attraction", placeholder: "e.g. Eiffel Tower" },
@@ -22,6 +22,7 @@ const ITEM_TYPES = [
 // Keys must match the EnrichedItem interface in api.ts.
 const FIELD_LABELS: Partial<Record<keyof EnrichedItem, string>> = {
   description: "Description",
+  location: "Address",
   opening_hours: "Hours",
   price_range: "Price",
   cuisine: "Cuisine",
@@ -36,6 +37,7 @@ const FIELD_LABELS: Partial<Record<keyof EnrichedItem, string>> = {
 
 interface Props {
   destination: string;
+  destinationId: string;
   onEnrich?: (item: EnrichedItem, name: string, itemType: string) => void;
 }
 
@@ -45,16 +47,16 @@ export default function ItemSearch({ destination, onEnrich }: Props) {
 
   const {
     name,
-    setName,
     suggestions,
     showDropdown,
-    setShowDropdown,
     activeIndex,
-    setActiveIndex,
+    handleActiveIndexChange,
     result,
     isPending,
     fetchError,
     handleSelect,
+    handleNameChange,
+    handleDropdownVisibility,
   } = useItemEnrichment({ destination, itemType, onEnrich });
 
   const activePlaceholder = ITEM_TYPES.find((t) => t.value === itemType)?.placeholder ?? "Item name";
@@ -64,36 +66,36 @@ export default function ItemSearch({ destination, onEnrich }: Props) {
   useEffect(() => {
     function handleMouseDown(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setShowDropdown(false);
+        handleDropdownVisibility(false);
       }
     }
     document.addEventListener("mousedown", handleMouseDown);
     return () => document.removeEventListener("mousedown", handleMouseDown);
-  }, [setShowDropdown]);
+  }, [handleDropdownVisibility]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
   function handleTabChange(val: string) {
     setItemType(val);
-    setName("");
-    setShowDropdown(false);
-    setActiveIndex(-1);
+    handleNameChange("");
+    handleDropdownVisibility(false);
+    handleActiveIndexChange(-1);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (!showDropdown || suggestions.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActiveIndex((i) => Math.min(i + 1, suggestions.length - 1));
+      handleActiveIndexChange((i) => Math.min(i + 1, suggestions.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActiveIndex((i) => Math.max(i - 1, 0));
+      handleActiveIndexChange((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter" && activeIndex >= 0) {
       e.preventDefault();
       handleSelect(suggestions[activeIndex]);
     } else if (e.key === "Escape") {
-      setShowDropdown(false);
-      setActiveIndex(-1);
+      handleDropdownVisibility(false);
+      handleActiveIndexChange(-1);
     }
   }
 
@@ -120,7 +122,7 @@ export default function ItemSearch({ destination, onEnrich }: Props) {
               aria-activedescendant={activeIndex >= 0 ? `suggestion-${activeIndex}` : undefined}
               placeholder={activePlaceholder}
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => handleNameChange(e.target.value)}
               onKeyDown={handleKeyDown}
               className={isPending ? "pr-9" : ""}
             />

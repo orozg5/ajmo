@@ -2,7 +2,6 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 from tavily import AsyncTavilyClient
 
@@ -22,9 +21,9 @@ logger = logging.getLogger(__name__)
 # ── Per-type configuration ────────────────────────────────────────────────────
 
 # Fields that must be JSON arrays of strings in the LLM response
-_LIST_FIELDS = {"tips", "amenities"}
+LIST_FIELDS = {"tips", "amenities"}
 
-_SEARCH_QUERY_TEMPLATES = {
+SEARCH_QUERY_TEMPLATES = {
     "attraction": "{name} {destination} attraction hours price",
     "restaurant": "{name} {destination} restaurant cuisine price hours reservation",
     "hotel":      "{name} {destination} hotel amenities check-in booking",
@@ -33,11 +32,11 @@ _SEARCH_QUERY_TEMPLATES = {
 }
 
 # Stable fields returned by Gemini → stored permanently in the places table
-_STABLE_FIELDS = ["canonical_name", "description", "location", "image_url"]
+STABLE_FIELDS = ["canonical_name", "description", "location", "image_url"]
 
 # Fresh (volatile) fields returned by Gemini → stored in ai_attraction_cache (24h TTL)
 # description intentionally excluded here — it lives in places (stable)
-_FRESH_FIELDS = {
+FRESH_FIELDS = {
     "attraction": ["opening_hours", "price_range", "tips"],
     "restaurant": ["cuisine", "price_range", "opening_hours", "reservation_tips"],
     "hotel":      ["amenities", "check_in_time", "price_range", "booking_tips"],
@@ -48,7 +47,7 @@ _FRESH_FIELDS = {
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_LEADING_ARTICLE_RE = re.compile(r"^(the|a|an)\s+", re.IGNORECASE)
+LEADING_ARTICLE_RE = re.compile(r"^(the|a|an)\s+", re.IGNORECASE)
 
 
 def build_cache_key(name: str, destination: str, item_type: str) -> str:
@@ -58,7 +57,7 @@ def build_cache_key(name: str, destination: str, item_type: str) -> str:
     ("The Eiffel Tower", "Paris", "attraction") → "eiffel-tower-paris-attraction"
     Leading articles (the, a, an) are stripped before slugifying so variants map to the same key.
     """
-    normalized_name = _LEADING_ARTICLE_RE.sub("", name).strip()
+    normalized_name = LEADING_ARTICLE_RE.sub("", name).strip()
     raw = f"{normalized_name} {destination}".lower()
     slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
     return f"{slug}-{item_type}"
@@ -67,16 +66,16 @@ def build_cache_key(name: str, destination: str, item_type: str) -> str:
 # ── Cache layer ───────────────────────────────────────────────────────────────
 
 
-async def get_cached_attraction(cache_key: str) -> Optional[dict]:
+async def get_cached_attraction(cache_key: str) -> dict | None:
     """
     Return cached data for cache_key if found and not yet expired.
     Uses server-side gt("expires_at") filter so expired rows are skipped cleanly.
     """
-    supabase_client = get_supabase_client()
+    supabase = get_supabase_client()
     now_iso = datetime.now(timezone.utc).isoformat()
 
     result = (
-        supabase_client.table("ai_attraction_cache")
+        supabase.table("ai_attraction_cache")
         .select("data")
         .eq("cache_key", cache_key)
         .gt("expires_at", now_iso)
@@ -90,11 +89,11 @@ async def get_cached_attraction(cache_key: str) -> Optional[dict]:
 
 async def store_attraction_cache(cache_key: str, data: dict) -> None:
     """Upsert enriched data into ai_attraction_cache with a 24-hour TTL."""
-    supabase_client = get_supabase_client()
+    supabase = get_supabase_client()
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(hours=24)
 
-    supabase_client.table("ai_attraction_cache").upsert(
+    supabase.table("ai_attraction_cache").upsert(
         {
             "cache_key": cache_key,
             "data": data,
@@ -114,7 +113,7 @@ async def search_item(name: str, destination: str, item_type: str) -> str:
     Raises RuntimeError if no results are returned (guards against empty LLM prompt).
     """
     client = AsyncTavilyClient(api_key=settings.TAVILY_API_KEY)
-    query = _SEARCH_QUERY_TEMPLATES[item_type].format(name=name, destination=destination)
+    query = SEARCH_QUERY_TEMPLATES[item_type].format(name=name, destination=destination)
 
     response = await client.search(
         query=query,
@@ -141,11 +140,11 @@ async def search_item(name: str, destination: str, item_type: str) -> str:
 # ── LLM enrichment ────────────────────────────────────────────────────────────
 
 
-def _build_prompt(name: str, destination: str, item_type: str, search_context: str) -> str:
+def build_prompt(name: str, destination: str, item_type: str, search_context: str) -> str:
     """Build a type-aware extraction prompt for the LLM."""
-    all_fields = _STABLE_FIELDS + _FRESH_FIELDS[item_type]
+    all_fields = STABLE_FIELDS + FRESH_FIELDS[item_type]
     schema = {
-        f: ["<item 1>", "<item 2>"] if f in _LIST_FIELDS else "<value or null>"
+        f: ["<item 1>", "<item 2>"] if f in LIST_FIELDS else "<value or null>"
         for f in all_fields
     }
     fields_json = json.dumps(schema, indent=2)
@@ -169,17 +168,23 @@ Rules:
 - List fields (shown as arrays above) must be JSON arrays of strings, never a single string."""
 
 
-async def enrich_with_llm(name: str, destination: str, item_type: str, search_context: str) -> dict:
+async def enrich_with_llm(
+    name: str,
+    destination: str,
+    item_type: str,
+    search_context: str,
+    model_state: dict | None = None,
+) -> dict:
     """
     Pass Tavily context to the primary LLM (Gemini) and extract structured data.
     Falls back to Groq automatically if Gemini hits a quota/rate limit.
     """
-    prompt = _build_prompt(name, destination, item_type, search_context)
-    raw_text = await call_llm_with_fallback(prompt, temperature=0)
+    prompt = build_prompt(name, destination, item_type, search_context)
+    raw_text = await call_llm_with_fallback(prompt, temperature=0, model_state=model_state)
     parsed = parse_llm_json(raw_text)
 
     # Ensure all expected keys exist (fill missing optional ones with None)
-    for key in _STABLE_FIELDS + _FRESH_FIELDS[item_type]:
+    for key in STABLE_FIELDS + FRESH_FIELDS[item_type]:
         parsed.setdefault(key, None)
 
     # Coerce all fields to their expected types based on schema
@@ -187,7 +192,7 @@ async def enrich_with_llm(name: str, destination: str, item_type: str, search_co
         value = parsed[key]
         if value is None:
             continue
-        if key in _LIST_FIELDS:
+        if key in LIST_FIELDS:
             # Expected: list[str]
             if isinstance(value, list):
                 parsed[key] = [str(v) for v in value if v is not None]
@@ -206,7 +211,7 @@ async def enrich_with_llm(name: str, destination: str, item_type: str, search_co
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 
-async def get_place_data(name: str, destination: str, item_type: str) -> dict:
+async def get_place_data(name: str, destination: str, item_type: str, model_state: dict | None = None) -> dict:
     """
     Unified lookup: slug_aliases → ai_attraction_cache → places → LLM fallback.
     Used by both enrichment and suggestions. Returns full merged place data.
@@ -246,7 +251,7 @@ async def get_place_data(name: str, destination: str, item_type: str) -> dict:
     search_context = await search_item(name, destination, item_type)
 
     # Step 5: LLM enrichment (response now includes canonical_name, location, image_url)
-    data = await enrich_with_llm(name, destination, item_type, search_context)
+    data = await enrich_with_llm(name, destination, item_type, search_context, model_state=model_state)
 
     # Step 6: build canonical slug from the name Gemini confirmed
     canonical_name = data.get("canonical_name") or name
@@ -274,7 +279,7 @@ async def get_place_data(name: str, destination: str, item_type: str) -> dict:
     await upsert_place(stable_payload)
 
     # Step 7b: store fresh fields in ai_attraction_cache (24h TTL)
-    fresh_data = {k: data[k] for k in _FRESH_FIELDS[item_type] if k in data}
+    fresh_data = {k: data[k] for k in FRESH_FIELDS[item_type] if k in data}
     try:
         await store_attraction_cache(canonical_slug, fresh_data)
     except Exception as exc:

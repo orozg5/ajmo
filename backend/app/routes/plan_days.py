@@ -14,7 +14,7 @@ from app.services.plans.days import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/plans", tags=["itinerary"])
+router = APIRouter(prefix="/plans", tags=["days"])
 
 
 @router.post("/{plan_id}/days/initialize")

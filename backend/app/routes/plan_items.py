@@ -3,23 +3,17 @@ import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
-from app.constants import VALID_ITEM_TYPES
 from app.schemas.itinerary import PlanItemCreate, PlanItemNotesUpdate, PlanItemResponse
 from app.services.plans.items import create_item, delete_item, update_item_notes
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/plans", tags=["itinerary"])
+router = APIRouter(prefix="/plans", tags=["items"])
 
 
 @router.post("/{plan_id}/days/{day_id}/items", status_code=201)
 async def create_item_route(plan_id: str, day_id: str, body: PlanItemCreate) -> PlanItemResponse:
     """Add an item to a day."""
-    if body.item_type not in VALID_ITEM_TYPES:
-        raise HTTPException(
-            status_code=422,
-            detail=f"item_type must be one of {sorted(VALID_ITEM_TYPES)}",
-        )
     try:
         return await create_item(plan_id, day_id, body.model_dump(exclude_none=True))
     except ValueError as exc:

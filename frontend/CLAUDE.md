@@ -2,12 +2,13 @@
 
 ## Frontend conventions
 
+- Import order within every file: `"use client"` directive → React → Next.js → third-party libraries → `@/components/ui/` (Shadcn) → `@/lib/` → `@/features/`; blank line between each group
 - Always use Shadcn/UI components: never use raw HTML for UI — always install and use the Shadcn component
 - Tailwind for all styling, no CSS modules or styled-components
 - App Router only — no pages/ directory
 - Server components by default; use "use client" only when necessary (event handlers, hooks, Yjs)
 - Supabase is queried directly via @supabase/ssr in Server Components and route handlers
-- All calls to the FastAPI backend go through /frontend/src/lib/api.ts
+- All calls to the FastAPI backend go through /frontend/src/lib/api/ (barrel re-exported via index.ts)
 - Server components use fetch() directly, client components use TanStack Query
 - Component files must use PascalCase (e.g., `ItemSearch.tsx`, `CreatePlanForm.tsx`) — never kebab-case
 - Feature-specific components and hooks live in `frontend/src/features/<feature>/components/` and `frontend/src/features/<feature>/hooks/`; one component per file — never define more than one component in a file
@@ -15,25 +16,34 @@
 - Complex data-fetching logic (refs, effects, handlers) in client components must be extracted to a `hooks/` directory within the same feature folder
 - Use `URLSearchParams` for building query strings in api.ts, never manual string interpolation
 - Display-layer label maps (e.g., FIELD_LABELS) must be module-level named constants with a comment marking them as intentionally configurable
+- All imports must use absolute `@/` paths — never relative imports like `./Sibling` or `../hooks/Hook`
+- Custom hooks must never expose raw React state setters (`setX`) — encapsulate state mutations behind named action functions (e.g. `handleNameChange`, `handleFieldChange`, `handleActiveIndexChange`)
+- Hook options interface: named `Use{HookName}Options` (e.g. `UseAiSuggestionsOptions`, `UseItemEnrichmentOptions`) — never `Props` (that's a component convention)
+- Hook return interface: exported and named `Use{HookName}Return` (e.g. `UseItemEnrichmentReturn`, `UsePlanItineraryReturn`) — always annotate the function return type explicitly
+- Abort error guard: use `isAbortError(error)` from `@/lib/utils` — never inline `(e as Error).name !== "AbortError"`
+- `PlanItem.ai_data` is typed as `EnrichedItem | null` — access fields directly, never cast to `Record<string, unknown>`
 
 ## Current working features
 
 - /plans/new — plan creation form
   - Server component: /frontend/src/app/plans/new/page.tsx
   - Client form: /frontend/src/features/plans/components/CreatePlanForm.tsx
-    - Shadcn Form + zod + react-hook-form + useMutation(createPlan) → redirect to /plans/[id] on success
+    - Shadcn Form + zod + react-hook-form
+    - After date fields: Destinations section — inline add form (country input, city input, day checkboxes based on date range), list of added destinations with remove buttons; at least one destination required before submit
+    - Submit flow: createPlan() → POST each destination via createDestination() → redirect to /plans/[id]
   - owner_id is a temporary form field (hardcoded dev UUID); replaced by auth.uid() when auth lands
 
 - /plans/[id] — day-by-day itinerary planner
   - Server component: /frontend/src/app/plans/[id]/page.tsx
-  - Calls getPlan() + initializeDays() in parallel server-side; days are auto-created from plan's date_from/date_to on first load (idempotent)
-  - Client component: /frontend/src/features/plans/components/ItineraryPlanner.tsx — owns day tabs (Shadcn Tabs), Add day button, wires all mutations
+  - Fetches plan, days, and destinations in parallel: `Promise.all([getPlan(), initializeDays(), getDestinations(planId)])`; passes all three to ItineraryPlanner
+  - Client component: /frontend/src/features/plans/components/ItineraryPlanner.tsx — owns day tabs (Shadcn Tabs), Add day button, wires all mutations; accepts `destinations` prop and filters to `dayDestinations` per DayView
   - State managed by /frontend/src/features/plans/hooks/usePlanItinerary.ts — local days state updated optimistically via TanStack Query mutations; addItem uses mutateAsync and returns Promise<PlanItem> so DayView can surface save errors
-  - Day view: /frontend/src/features/plans/components/DayView.tsx — item list + ItemSearch add-item section; cancel remounts ItemSearch via key counter to clear input/result
+  - Day view: /frontend/src/features/plans/components/DayView.tsx — renders one destination block per day-destination; each block has a destination header (City, Country) + ItemSearch + items filtered by `item.destination_id === dest.id`; fallback block at top for legacy items without destination_id; cancel remounts ItemSearch via key counter to clear input/result
   - Item card: /frontend/src/features/plans/components/ItemCard.tsx — collapsible (chevron toggle); collapsed shows title + type badge + location/time; expanded shows AI fields + editable notes textarea (saves on blur via PATCH)
 
 - ItemSearch — AI enrichment UI with autocomplete dropdown, scoped to a plan's destination
   - Client component: /frontend/src/features/plans/components/ItemSearch.tsx
+  - Accepts `destinationId: string` prop (in addition to `destination: string`); passes `destination_id` in the addItem() payload via usePlanItinerary.ts
   - Shadcn Tabs for item type (Attraction / Restaurant / Hotel / Transport / Activity); switching tabs resets all state
   - Data-fetching logic (abort controllers, debounce, effects) extracted to /frontend/src/features/plans/hooks/useItemEnrichment.ts
   - Two independent AbortControllers: autocompleteAbortRef (autocomplete) and enrichAbortRef (enrichment) — never cancel each other
@@ -41,7 +51,7 @@
   - Autocomplete effect: fires immediately on name change (no debounce) → GET /places/autocomplete → sets suggestions + showDropdown
   - Enrichment effect: deps = [name, itemType, destination, showDropdown] — returns early if showDropdown is true; skipDebounceRef bypasses 700ms on select
   - Click-outside: mousedown listener on document, guarded by containerRef (kept in component — DOM concern)
-  - Keyboard nav on Input: ArrowDown/Up moves activeIndex, Enter selects, Escape closes dropdown
+  - Keyboard nav on Input: ArrowDown/Up calls handleActiveIndexChange with functional updater, Enter selects, Escape closes dropdown
   - Dropdown: role="listbox" with role="option" items; onMouseDown + e.preventDefault() keeps input focused during click — do NOT use onClick here
   - ARIA: Input has role="combobox", aria-expanded, aria-haspopup, aria-autocomplete, aria-activedescendant
   - Loader2 spinner inside input right side while enrichment is in flight
@@ -62,13 +72,13 @@
     - Fetches from POST /ai/suggestions on mount; auto-retries once with force_refresh=true if result is empty
     - addSuggestion(): enriches a suggestion via POST /ai/enrich, then calls onAddItem() (fire-and-forget); tracks addingNames Set for optimistic UI
     - refresh(): clears current suggestions and force-fetches fresh ones
-  - Each card shows emoji (by type), name, one_line description, price_hint; clicking card shows day selector to pick which day to add it to
+  - Each card shows emoji (by type), name, one_line description, price_hint, destination_city (badge/subtitle); clicking card shows day selector to pick which day to add it to
   - Skeleton loading: 4 placeholder cards while fetching
 
 - /frontend/src/lib/api/ — central API layer for all FastAPI calls, split by domain
   - `client.ts` — `apiFetch<T>()` wrapper: returns `undefined as T` for 204, throws on non-ok with detail message
-  - `plans.ts` — Plan, CreatePlanPayload, PlanItem, PlanDay, AddItemPayload; plan CRUD + itinerary functions (initializeDays, getDays, addDay, removeDay, addItem, removeItem, updateItemNotes)
-  - `ai.ts` — EnrichedItem, PlaceSuggestion, AiSuggestion, AiSuggestionsResult; enrichItem, enrichBatch, autocompletePlaces, getSuggestions, getNextSuggestion
+  - `plans.ts` — Plan, CreatePlanPayload, PlanItem, PlanDay, AddItemPayload, DestinationResponse; plan CRUD + itinerary functions (initializeDays, getDays, addDay, removeDay, addItem, removeItem, updateItemNotes) + destination functions (createDestination, getDestinations)
+  - `ai.ts` — EnrichedItem, PlaceSuggestion, AiSuggestion (includes `destination_city: string`), AiSuggestionsResult; enrichItem, enrichBatch, autocompletePlaces, getSuggestions, getNextSuggestion
   - `users.ts` — UserPreferences; getPreferences, upsertPreferences
   - `index.ts` — barrel re-export; all imports from `@/lib/api` continue to work unchanged
   - Query strings built with URLSearchParams; AbortSignal passed where relevant

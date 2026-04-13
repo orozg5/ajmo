@@ -54,6 +54,24 @@ create table plan_days (
   title text
 );
 
+-- Plan destinations — structured multi-destination support
+create table plan_destinations (
+  id uuid primary key default uuid_generate_v4(),
+  plan_id uuid references plans(id) on delete cascade,
+  country text not null,
+  city text not null,
+  sort_order integer not null default 0, 
+  created_at timestamptz default now()
+);
+
+create table plan_destination_days (
+  destination_id uuid references plan_destinations(id) on delete cascade,
+  day_number integer not null,
+  primary key (destination_id, day_number)
+);
+
+create index idx_plan_destinations_plan_id on plan_destinations(plan_id);
+
 -- Plan items
 create table plan_items (
   id uuid primary key default uuid_generate_v4(),
@@ -65,9 +83,9 @@ create table plan_items (
   notes text,
   location text,
   start_time time,
-  estimated_cost numeric,
   sort_order integer,
-  ai_data jsonb
+  ai_data jsonb,
+  destination_id uuid references plan_destinations(id) on delete set null
 );
 
 -- Friendships
@@ -126,10 +144,11 @@ alter table plans enable row level security;
 alter table plan_members enable row level security;
 alter table plan_days enable row level security;
 alter table plan_items enable row level security;
+alter table plan_destinations enable row level security;
 alter table friendships enable row level security;
 alter table places enable row level security;
--- Note: ai_attraction_cache intentionally has NO RLS policies
--- It is backend-only via service_role key
+-- Note: ai_attraction_cache, slug_aliases, and plan_destination_days intentionally have NO RLS policies
+-- All three are backend-only tables accessed exclusively via service_role key
 
 -- Basic RLS policies (users see their own data)
 create policy "Users can view own profile" on profiles for select using (auth.uid() = id);

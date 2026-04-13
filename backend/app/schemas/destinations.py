@@ -1,4 +1,4 @@
-"""Pydantic models for user preferences endpoints."""
+"""Pydantic schemas for plan destination endpoints."""
 from __future__ import annotations
 
 from pydantic import BaseModel
@@ -7,20 +7,21 @@ from pydantic import BaseModel
 # ── Request models ─────────────────────────────────────────────────────────────
 
 
-class UserPreferencesUpdate(BaseModel):
-    user_id: str
-    interest_tags: list[str] | None = None
-    dietary: list[str] | None = None
-    budget: str | None = None
-    custom_notes: str | None = None
+class DestinationCreate(BaseModel):
+    country: str
+    city: str
+    sort_order: int = 0
+    day_numbers: list[int] = []
 
 
 # ── Response models ────────────────────────────────────────────────────────────
 
 
-class UserPreferencesResponse(BaseModel):
-    user_id: str
-    interest_tags: list[str] | None = None
-    dietary: list[str] | None = None
-    budget: str | None = None
-    custom_notes: str | None = None
+class DestinationResponse(BaseModel):
+    id: str
+    plan_id: str
+    country: str
+    city: str
+    sort_order: int
+    days: list[int]
+    created_at: str

@@ -60,6 +60,9 @@ export default function SuggestionCard({ suggestion, days, isAdding, onAdd }: Pr
         <span className="text-base leading-none mt-0.5">{TYPE_EMOJI[suggestion.item_type] ?? "📍"}</span>
         <p className="text-sm font-medium leading-tight line-clamp-2">{suggestion.name}</p>
       </div>
+      {suggestion.destination_city && (
+        <span className="text-xs text-muted-foreground font-medium">{suggestion.destination_city}</span>
+      )}
       {suggestion.one_line && <p className="text-xs text-muted-foreground line-clamp-2">{suggestion.one_line}</p>}
       <div className="flex items-center justify-between mt-auto pt-1">
         {suggestion.price_hint && <span className="text-xs text-muted-foreground">{suggestion.price_hint}</span>}

@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
 from app.schemas.ai import (
-    AiSuggestionItem,
+    AiSuggestionItemResponse,
     AiSuggestionsResponse,
     EnrichedItemResponse,
     EnrichBatchRequest,
@@ -147,7 +147,7 @@ async def suggest_items(body: SuggestionsRequest) -> AiSuggestionsResponse:
 
 
 @router.post("/suggestions/next")
-async def next_suggestion(body: NextSuggestionRequest) -> AiSuggestionItem:
+async def next_suggestion(body: NextSuggestionRequest) -> AiSuggestionItemResponse:
     """
     Return a single new suggestion not in exclude_names.
 
@@ -196,4 +196,4 @@ async def next_suggestion(body: NextSuggestionRequest) -> AiSuggestionItem:
     if suggestion is None:
         raise HTTPException(status_code=404, detail="No new suggestion could be generated")
 
-    return AiSuggestionItem(**suggestion)
+    return AiSuggestionItemResponse(**suggestion)

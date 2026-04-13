@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { AiSuggestion } from "./ai";
+import type { AiSuggestion, EnrichedItem } from "./ai";
 
 export interface Plan {
   id: string;
@@ -35,9 +35,9 @@ export interface PlanItem {
   notes: string | null;
   location: string | null;
   start_time: string | null;
-  estimated_cost: number | null;
   sort_order: number | null;
-  ai_data: Record<string, unknown> | null;
+  ai_data: EnrichedItem | null;
+  destination_id: string | null;
 }
 
 export interface PlanDay {
@@ -55,9 +55,26 @@ export interface AddItemPayload {
   notes?: string;
   location?: string;
   start_time?: string;
-  estimated_cost?: number;
   sort_order?: number;
-  ai_data?: Record<string, unknown>;
+  ai_data?: EnrichedItem;
+  destination_id?: string;
+}
+
+export interface DestinationResponse {
+  id: string;
+  plan_id: string;
+  country: string;
+  city: string;
+  sort_order: number;
+  days: number[];
+  created_at: string;
+}
+
+export interface CreateDestinationPayload {
+  country: string;
+  city: string;
+  sort_order: number;
+  day_numbers: number[];
 }
 
 export const createPlan = (data: CreatePlanPayload): Promise<Plan> =>
@@ -99,4 +116,17 @@ export const updateItemNotes = (planId: string, itemId: string, notes: string | 
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ notes }),
+  });
+
+export const getDestinations = (planId: string): Promise<DestinationResponse[]> =>
+  apiFetch<DestinationResponse[]>(`/plans/${planId}/destinations`);
+
+export const createDestination = (
+  planId: string,
+  payload: CreateDestinationPayload,
+): Promise<DestinationResponse> =>
+  apiFetch<DestinationResponse>(`/plans/${planId}/destinations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });

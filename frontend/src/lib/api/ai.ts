@@ -12,6 +12,7 @@ export interface EnrichedItem {
   booking_tips: string | null;
   schedule: string | null;
   duration: string | null;
+  location: string | null;
 }
 
 export interface PlaceSuggestion {
@@ -31,6 +32,8 @@ export interface AiSuggestion {
   price_hint: string | null;
   slug: string;
   cached: boolean;
+  destination_city: string | null;
+  enriched?: EnrichedItem | null;
 }
 
 export interface AiSuggestionsResult {

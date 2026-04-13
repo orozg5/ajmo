@@ -1,32 +1,39 @@
 """Pydantic models for itinerary day and item endpoints."""
 from __future__ import annotations
 
-from typing import Optional
+from pydantic import BaseModel, field_validator
 
-from pydantic import BaseModel
+from app.constants import VALID_ITEM_TYPES
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
 
 
 class PlanDayCreate(BaseModel):
-    day_number: Optional[int] = None  # auto-assigned as max + 1 if omitted
-    date: Optional[str] = None
+    day_number: int | None = None  # auto-assigned as max + 1 if omitted
+    date: str | None = None
 
 
 class PlanItemCreate(BaseModel):
     item_type: str
     title: str
-    notes: Optional[str] = None
-    location: Optional[str] = None
-    start_time: Optional[str] = None
-    estimated_cost: Optional[float] = None
-    sort_order: Optional[int] = None
-    ai_data: Optional[dict] = None
+    notes: str | None = None
+    location: str | None = None
+    start_time: str | None = None
+    sort_order: int | None = None
+    ai_data: dict | None = None
+    destination_id: str | None = None
+
+    @field_validator("item_type")
+    @classmethod
+    def validate_item_type(cls, v: str) -> str:
+        if v not in VALID_ITEM_TYPES:
+            raise ValueError(f"item_type must be one of {sorted(VALID_ITEM_TYPES)}")
+        return v
 
 
 class PlanItemNotesUpdate(BaseModel):
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 # ── Response models ────────────────────────────────────────────────────────────
@@ -38,18 +45,18 @@ class PlanItemResponse(BaseModel):
     day_id: str
     item_type: str
     title: str
-    notes: Optional[str] = None
-    location: Optional[str] = None
-    start_time: Optional[str] = None
-    estimated_cost: Optional[float] = None
-    sort_order: Optional[int] = None
-    ai_data: Optional[dict] = None
+    notes: str | None = None
+    location: str | None = None
+    start_time: str | None = None
+    sort_order: int | None = None
+    ai_data: dict | None = None
+    destination_id: str | None = None
 
 
 class PlanDayWithItemsResponse(BaseModel):
     id: str
     plan_id: str
     day_number: int
-    date: Optional[str] = None
-    title: Optional[str] = None
+    date: str | None = None
+    title: str | None = None
     items: list[PlanItemResponse]

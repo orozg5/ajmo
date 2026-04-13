@@ -24,13 +24,11 @@ export default function ItemCard({ item, onRemove, onNotesUpdate }: Props) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [notes, setNotes] = useState(item.notes ?? "");
 
-  const aiData = item.ai_data as Record<string, unknown> | null;
-  const description = aiData?.description as string | null | undefined;
-  const openingHours = (aiData?.opening_hours ?? aiData?.check_in_time ?? aiData?.schedule) as
-    | string
-    | null
-    | undefined;
-  const priceRange = aiData?.price_range as string | null | undefined;
+  const aiData = item.ai_data;
+  const description = aiData?.description;
+  const openingHours = aiData?.opening_hours ?? aiData?.check_in_time ?? aiData?.schedule;
+  const priceRange = aiData?.price_range;
+  const location = item.location ?? aiData?.location ?? null;
 
   function handleNotesBlur() {
     onNotesUpdate(notes.trim() === "" ? null : notes.trim());
@@ -63,9 +61,9 @@ export default function ItemCard({ item, onRemove, onNotesUpdate }: Props) {
       </div>
 
       {/* Subtitle */}
-      {(item.location || item.start_time) && (
+      {(location || item.start_time) && (
         <p className="text-sm text-muted-foreground truncate">
-          {[item.location, item.start_time].filter(Boolean).join(" · ")}
+          {[location, item.start_time].filter(Boolean).join(" · ")}
         </p>
       )}
 
@@ -83,16 +81,6 @@ export default function ItemCard({ item, onRemove, onNotesUpdate }: Props) {
             <p className="text-muted-foreground">
               <span className="font-medium text-foreground">Price: </span>
               {priceRange}
-            </p>
-          )}
-          {item.estimated_cost != null && (
-            <p className="text-muted-foreground">
-              <span className="font-medium text-foreground">Est. cost: </span>
-              {item.estimated_cost.toLocaleString(undefined, {
-                style: "currency",
-                currency: "EUR",
-                maximumFractionDigits: 0,
-              })}
             </p>
           )}
           <div className="space-y-1">
