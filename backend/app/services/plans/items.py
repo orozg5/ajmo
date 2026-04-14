@@ -11,6 +11,13 @@ logger = logging.getLogger(__name__)
 async def create_item(plan_id: str, day_id: str, payload: dict) -> dict:
     """Insert a new plan item and return the created row."""
     supabase = get_supabase_client()
+    if "sort_order" not in payload or payload.get("sort_order") is None:
+        existing = supabase.table("plan_items").select("sort_order").eq("day_id", day_id).execute()
+        max_order = max(
+            (row["sort_order"] for row in existing.data if row.get("sort_order") is not None),
+            default=0,
+        )
+        payload = {**payload, "sort_order": max_order + 1000}
     result = (
         supabase.table("plan_items")
         .insert({**payload, "plan_id": plan_id, "day_id": day_id})

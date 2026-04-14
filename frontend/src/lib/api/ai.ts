@@ -15,6 +15,10 @@ export interface EnrichedItem {
   location: string | null;
 }
 
+export interface CrossCityMarker {
+  cross_city_pair: string;
+}
+
 export interface PlaceSuggestion {
   slug: string;
   name: string;
@@ -38,6 +42,33 @@ export interface AiSuggestion {
 
 export interface AiSuggestionsResult {
   suggestions: AiSuggestion[];
+}
+
+export interface TransportOption {
+  name: string;
+  one_line: string | null;
+  price_hint: string | null;
+}
+
+export interface TransportSuggestion {
+  source_item_id: string | null;
+  source_item_title: string | null;
+  source_item_location: string | null;
+  destination_item_id: string | null;
+  destination_item_title: string | null;
+  destination_item_location: string | null;
+  scope: "same_day" | "cross_city" | null;
+  source_day_number: number | null;
+  destination_day_number: number | null;
+  source_city: string | null;
+  destination_city: string | null;
+  source_country: string | null;
+  destination_country: string | null;
+  options: TransportOption[];
+}
+
+export interface TransportSuggestionsResult {
+  suggestions: TransportSuggestion[];
 }
 
 export const enrichItem = (
@@ -103,5 +134,28 @@ export const getNextSuggestion = (
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ plan_id: planId, user_id: userId, exclude_names: excludeNames }),
+    signal,
+  });
+
+export const getDayTransportSuggestions = (
+  planId: string,
+  dayId: string,
+  signal?: AbortSignal,
+): Promise<TransportSuggestionsResult> =>
+  apiFetch<TransportSuggestionsResult>("/ai/transport-suggestions/day", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plan_id: planId, day_id: dayId }),
+    signal,
+  });
+
+export const getCrossCityTransportSuggestions = (
+  planId: string,
+  signal?: AbortSignal,
+): Promise<TransportSuggestionsResult> =>
+  apiFetch<TransportSuggestionsResult>("/ai/transport-suggestions/cross-city", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plan_id: planId }),
     signal,
   });

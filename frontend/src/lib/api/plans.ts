@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { AiSuggestion, EnrichedItem } from "./ai";
+import type { AiSuggestion, CrossCityMarker, EnrichedItem } from "./ai";
 
 export interface Plan {
   id: string;
@@ -36,7 +36,7 @@ export interface PlanItem {
   location: string | null;
   start_time: string | null;
   sort_order: number | null;
-  ai_data: EnrichedItem | null;
+  ai_data: EnrichedItem | CrossCityMarker | null;
   destination_id: string | null;
 }
 
@@ -56,7 +56,7 @@ export interface AddItemPayload {
   location?: string;
   start_time?: string;
   sort_order?: number;
-  ai_data?: EnrichedItem;
+  ai_data?: EnrichedItem | CrossCityMarker | null;
   destination_id?: string;
 }
 

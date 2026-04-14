@@ -162,7 +162,7 @@ Respond with ONLY a valid JSON object (no markdown, no explanation) with exactly
 
 Rules:
 - canonical_name: the official full name of this place (e.g. "Hilton Paris Opera" not "Hilton"). Use the most complete, commonly recognised name.
-- location: the address or area (e.g. "Champ de Mars, Paris" or "5 Avenue Anatole France, 75007 Paris").
+- location: a specific street address with number (e.g. "5 Avenue Anatole France, 75007 Paris") or a precise named area within the city (e.g. "Champ de Mars, 5th arrondissement, Paris"). NEVER return just a city name like "Toronto, Canada". If no specific address is found, use the name of the nearest landmark or neighborhood.
 - image_url: a direct URL to a representative image if found in the search results; null otherwise.
 - Use null for any field you cannot determine.
 - List fields (shown as arrays above) must be JSON arrays of strings, never a single string."""

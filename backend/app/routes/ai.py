@@ -7,14 +7,19 @@ from fastapi.responses import Response
 from app.schemas.ai import (
     AiSuggestionItemResponse,
     AiSuggestionsResponse,
+    CrossCityTransportRequest,
+    DayTransportRequest,
     EnrichedItemResponse,
     EnrichBatchRequest,
     EnrichRequest,
     NextSuggestionRequest,
     SuggestionsRequest,
+    TransportSuggestionItem,
+    TransportSuggestionsResponse,
 )
 from app.services.ai.enrichment import get_place_data
 from app.services.ai.suggestions import get_next_suggestion, get_suggestions
+from app.services.ai.transport import get_cross_city_suggestions, get_same_day_suggestions
 from app.services.plans.days import list_days_with_items
 from app.services.plans.crud import get_plan
 from app.services.users.preferences import get_preferences
@@ -25,7 +30,7 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 
 @router.post("/enrich")
-async def enrich_item(body: EnrichRequest, request: Request) -> EnrichedItemResponse:
+async def enrich_item_route(body: EnrichRequest, request: Request) -> EnrichedItemResponse:
     """
     Enrich a travel item with live AI-generated data.
     Supports item_type: attraction, restaurant, hotel, transport, activity.
@@ -72,7 +77,7 @@ async def enrich_item(body: EnrichRequest, request: Request) -> EnrichedItemResp
 
 
 @router.post("/enrich-batch")
-async def enrich_batch(body: EnrichBatchRequest) -> list[EnrichedItemResponse]:
+async def enrich_batch_route(body: EnrichBatchRequest) -> list[EnrichedItemResponse]:
     """
     Enrich up to 5 travel items concurrently.
     Each item follows the same enrichment pipeline as POST /ai/enrich.
@@ -95,7 +100,7 @@ async def enrich_batch(body: EnrichBatchRequest) -> list[EnrichedItemResponse]:
 
 
 @router.post("/suggestions")
-async def suggest_items(body: SuggestionsRequest) -> AiSuggestionsResponse:
+async def suggest_items_route(body: SuggestionsRequest) -> AiSuggestionsResponse:
     """
     Generate AI suggestions for a travel plan based on destination, existing items,
     and the user's saved preferences. Reads from plans.suggestions (JSONB); calls
@@ -147,7 +152,7 @@ async def suggest_items(body: SuggestionsRequest) -> AiSuggestionsResponse:
 
 
 @router.post("/suggestions/next")
-async def next_suggestion(body: NextSuggestionRequest) -> AiSuggestionItemResponse:
+async def next_suggestion_route(body: NextSuggestionRequest) -> AiSuggestionItemResponse:
     """
     Return a single new suggestion not in exclude_names.
 
@@ -197,3 +202,50 @@ async def next_suggestion(body: NextSuggestionRequest) -> AiSuggestionItemRespon
         raise HTTPException(status_code=404, detail="No new suggestion could be generated")
 
     return AiSuggestionItemResponse(**suggestion)
+
+
+@router.post("/transport-suggestions/day")
+async def get_day_transport_route(
+    body: DayTransportRequest,
+) -> TransportSuggestionsResponse:
+    """
+    Generate transport suggestions for all consecutive item pairs within a single day.
+
+    Pairs span across destination boundaries within the day, so same-day cross-city
+    travel (e.g. Rocky Steps → White House when Philly and DC share a day) is included.
+    Results are cached in plans.transport_suggestions["same_day"][day_id].
+    """
+    try:
+        suggestions_data = await get_same_day_suggestions(body.plan_id, body.day_id)
+        suggestions = [TransportSuggestionItem(**s) for s in suggestions_data]
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        logger.exception("Unexpected error generating day transport suggestions")
+        raise HTTPException(status_code=500, detail="Failed to generate transport suggestions")
+
+    return TransportSuggestionsResponse(suggestions=suggestions)
+
+
+@router.post("/transport-suggestions/cross-city")
+async def get_cross_city_transport_route(
+    body: CrossCityTransportRequest,
+) -> TransportSuggestionsResponse:
+    """
+    Generate transport suggestions for inter-city transitions only.
+
+    For each consecutive destination pair: last item of city A -> first item of city B.
+    Response includes source_city, destination_city, source_day_number, destination_day_number
+    so the frontend can render "Philadelphia → Washington DC" context in the day picker.
+    Results are cached in plans.transport_suggestions["cross_city"].
+    """
+    try:
+        suggestions_data = await get_cross_city_suggestions(body.plan_id)
+        suggestions = [TransportSuggestionItem(**s) for s in suggestions_data]
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        logger.exception("Unexpected error generating cross-city transport suggestions")
+        raise HTTPException(status_code=500, detail="Failed to generate transport suggestions")
+
+    return TransportSuggestionsResponse(suggestions=suggestions)

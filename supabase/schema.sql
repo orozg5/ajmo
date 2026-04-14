@@ -33,6 +33,7 @@ create table plans (
   cover_image_url text,
   yjs_state bytea,
   suggestions jsonb,
+  transport_suggestions jsonb,
   created_at timestamptz default now()
 );
 

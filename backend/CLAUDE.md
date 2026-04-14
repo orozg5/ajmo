@@ -205,6 +205,19 @@ by recording exactly what the user meant after Gemini confirmed it.
   - DestinationResponse and DestinationCreate defined in /backend/app/schemas/destinations.py
   - Files: /backend/app/routes/plan_destinations.py, /backend/app/services/plans/destinations.py
 
+- Transport suggestions — same-day and cross-city transport between consecutive plan items
+  - POST /ai/transport-suggestions/day — request: `{ plan_id, day_id }`
+    - Builds consecutive item pairs for all items in the day (spans destination boundaries, so same-day cross-city travel is included)
+    - Calls LLM via `call_llm_with_fallback` (temperature=0.4) to generate 2–3 transport options per pair
+    - Caches results in `plans.transport_suggestions["same_day"][day_id]`; cache is invalidated when new items are inserted between a cached pair's endpoints
+  - POST /ai/transport-suggestions/cross-city — request: `{ plan_id }`
+    - Pairs last item of destination N → first item of destination N+1 for each consecutive destination pair
+    - Handles destinations with no items using sentinel objects (id=None) so empty cities still produce suggestions
+    - Detects already-covered transitions: if a plan_item with `ai_data.cross_city_pair == "srcId->dstId"` exists, that pair is excluded from the response
+    - Caches results in `plans.transport_suggestions["cross_city"]`
+  - Response shape for both: `{ suggestions: [{ source_item_id, source_item_title, source_item_location, destination_item_id, destination_item_title, destination_item_location, source_city, destination_city, source_country, destination_country, source_day_number, destination_day_number, scope, options: [{ name, one_line, price_hint }] }] }`
+  - Files: `/backend/app/services/ai/transport.py`, `/backend/app/routes/ai.py`
+
 - User preferences — per-user travel preferences used to personalise AI suggestions
   - GET /users/me/preferences?user_id= — returns preferences dict or 404
   - PUT /users/me/preferences — upserts on `user_id` conflict

@@ -21,7 +21,7 @@
 - Hook options interface: named `Use{HookName}Options` (e.g. `UseAiSuggestionsOptions`, `UseItemEnrichmentOptions`) — never `Props` (that's a component convention)
 - Hook return interface: exported and named `Use{HookName}Return` (e.g. `UseItemEnrichmentReturn`, `UsePlanItineraryReturn`) — always annotate the function return type explicitly
 - Abort error guard: use `isAbortError(error)` from `@/lib/utils` — never inline `(e as Error).name !== "AbortError"`
-- `PlanItem.ai_data` is typed as `EnrichedItem | null` — access fields directly, never cast to `Record<string, unknown>`
+- `PlanItem.ai_data` is typed as `EnrichedItem | CrossCityMarker | null` — access fields directly, never cast to `Record<string, unknown>`; `CrossCityMarker` (from `@/lib/api/ai.ts`) is the only non-enriched shape allowed and is written exclusively by `useCrossCityTransport` to mark a covered inter-city transition
 
 ## Current working features
 
@@ -43,7 +43,7 @@
 
 - ItemSearch — AI enrichment UI with autocomplete dropdown, scoped to a plan's destination
   - Client component: /frontend/src/features/plans/components/ItemSearch.tsx
-  - Accepts `destinationId: string` prop (in addition to `destination: string`); passes `destination_id` in the addItem() payload via usePlanItinerary.ts
+  - Accepts only `destination: string` for enrichment scope; `destination_id` is captured by DayView via the `makeHandleEnrich(dest.id)` closure — ItemSearch does not need a `destinationId` prop
   - Shadcn Tabs for item type (Attraction / Restaurant / Hotel / Transport / Activity); switching tabs resets all state
   - Data-fetching logic (abort controllers, debounce, effects) extracted to /frontend/src/features/plans/hooks/useItemEnrichment.ts
   - Two independent AbortControllers: autocompleteAbortRef (autocomplete) and enrichAbortRef (enrichment) — never cancel each other
@@ -75,10 +75,30 @@
   - Each card shows emoji (by type), name, one_line description, price_hint, destination_city (badge/subtitle); clicking card shows day selector to pick which day to add it to
   - Skeleton loading: 4 placeholder cards while fetching
 
+- Transport suggestions — same-day and cross-city transport UI wired into the itinerary planner
+  - `DayTransportContext` interface (exported from DayView.tsx): `{ suggestions: Map<string, TransportSuggestion>, isFetching: boolean, addingKeys: Set<string>, onAddTransportOption(suggestion, optionIndex, extra?), transportPositions?: Map<string, string> }` — passed from ItineraryPlanner into each DayView
+  - InlineTransportBar: /frontend/src/features/plans/components/InlineTransportBar.tsx
+    - Rendered between consecutive non-transport items within a destination section in DayView
+    - Props: `suggestion?: TransportSuggestion`, `isFetching: boolean`, `isAdding: boolean`, `onAdd(optionIndex: number) => void`
+    - Shows transport options as buttons; skeleton while fetching; hidden when no suggestion for the pair
+  - CrossCityTransportPanel: /frontend/src/features/plans/components/CrossCityTransportPanel.tsx
+    - Modal/panel listing all cross-city transition suggestions; opened from a button in ItineraryPlanner
+    - Shows source → destination city pairs with Add buttons per transport option
+  - useDayTransport: /frontend/src/features/plans/hooks/useDayTransport.ts
+    - Options: `UseDayTransportOptions { planId }`; Return: `UseDayTransportReturn`
+    - Manages per-day state in a Map keyed by dayId; tracks dismissed pairs (Set) and in-session transport positions (Map<transportId, sourceItemId>) for optimistic re-ordering
+    - `fetchForDay(dayId)` — POST /ai/transport-suggestions/day; per-day AbortControllers prevent cross-day cancellation
+    - `addOption(suggestion, optionIndex, dayId, onAddItem, extra?)` — calls onAddItem then updates transportPositions for immediate re-ordering
+  - useCrossCityTransport: /frontend/src/features/plans/hooks/useCrossCityTransport.ts
+    - Options: `UseCrossCityTransportOptions { planId }`; Return: `UseCrossCityTransportReturn`
+    - `fetchSuggestions()` — POST /ai/transport-suggestions/cross-city; single AbortController
+    - `openPanel()` / `closePanel()` — controls panel visibility; `hasFetched` tracks first-load state
+    - `addOption(suggestion, optionIndex, dayId, onAddItem, extra?)` — stores `CrossCityMarker` in ai_data and removes suggestion from panel immediately
+
 - /frontend/src/lib/api/ — central API layer for all FastAPI calls, split by domain
   - `client.ts` — `apiFetch<T>()` wrapper: returns `undefined as T` for 204, throws on non-ok with detail message
   - `plans.ts` — Plan, CreatePlanPayload, PlanItem, PlanDay, AddItemPayload, DestinationResponse; plan CRUD + itinerary functions (initializeDays, getDays, addDay, removeDay, addItem, removeItem, updateItemNotes) + destination functions (createDestination, getDestinations)
-  - `ai.ts` — EnrichedItem, PlaceSuggestion, AiSuggestion (includes `destination_city: string`), AiSuggestionsResult; enrichItem, enrichBatch, autocompletePlaces, getSuggestions, getNextSuggestion
+  - `ai.ts` — EnrichedItem, CrossCityMarker, PlaceSuggestion, AiSuggestion (includes `destination_city: string`), AiSuggestionsResult, TransportOption, TransportSuggestion, TransportSuggestionsResult; enrichItem, enrichBatch, autocompletePlaces, getSuggestions, getNextSuggestion, getDayTransportSuggestions, getCrossCityTransportSuggestions
   - `users.ts` — UserPreferences; getPreferences, upsertPreferences
   - `index.ts` — barrel re-export; all imports from `@/lib/api` continue to work unchanged
   - Query strings built with URLSearchParams; AbortSignal passed where relevant

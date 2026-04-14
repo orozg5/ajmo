@@ -37,7 +37,6 @@ const FIELD_LABELS: Partial<Record<keyof EnrichedItem, string>> = {
 
 interface Props {
   destination: string;
-  destinationId: string;
   onEnrich?: (item: EnrichedItem, name: string, itemType: string) => void;
 }
 

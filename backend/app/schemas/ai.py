@@ -39,6 +39,42 @@ class NextSuggestionRequest(BaseModel):
     exclude_names: list[str] = Field(default_factory=list, description="Names already shown or added")
 
 
+class DayTransportRequest(BaseModel):
+    plan_id: str = Field(..., description="UUID of the plan")
+    day_id: str = Field(..., description="UUID of the day")
+
+
+class CrossCityTransportRequest(BaseModel):
+    plan_id: str = Field(..., description="UUID of the plan")
+
+
+class TransportOption(BaseModel):
+    name: str
+    one_line: str | None = None
+    price_hint: str | None = None
+
+
+class TransportSuggestionItem(BaseModel):
+    source_item_id: str | None = None
+    source_item_title: str | None = None
+    source_item_location: str | None = None
+    destination_item_id: str | None = None
+    destination_item_title: str | None = None
+    destination_item_location: str | None = None
+    scope: str | None = None
+    source_day_number: int | None = None
+    destination_day_number: int | None = None
+    source_city: str | None = None
+    destination_city: str | None = None
+    source_country: str | None = None
+    destination_country: str | None = None
+    options: list[TransportOption] = Field(default_factory=list)
+
+
+class TransportSuggestionsResponse(BaseModel):
+    suggestions: list[TransportSuggestionItem]
+
+
 # ── Response models ────────────────────────────────────────────────────────────
 
 
