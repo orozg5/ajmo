@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { type PlanItem } from "@/lib/api";
+import { type EnrichedItem, type PlanItem } from "@/lib/api";
 
 const ITEM_TYPE_LABELS: Record<string, string> = {
   attraction: "Attraction",
@@ -24,11 +24,12 @@ export default function ItemCard({ item, onRemove, onNotesUpdate }: Props) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [notes, setNotes] = useState(item.notes ?? "");
 
-  const aiData = item.ai_data;
-  const description = aiData?.description;
-  const openingHours = aiData?.opening_hours ?? aiData?.check_in_time ?? aiData?.schedule;
-  const priceRange = aiData?.price_range;
-  const location = item.location ?? aiData?.location ?? null;
+  // CrossCityMarker has only cross_city_pair — narrow to EnrichedItem for display fields
+  const enriched = item.ai_data && "cross_city_pair" in item.ai_data ? null : (item.ai_data as EnrichedItem | null);
+  const description = enriched?.description;
+  const openingHours = enriched?.opening_hours ?? enriched?.check_in_time ?? enriched?.schedule;
+  const priceRange = enriched?.price_range;
+  const location = item.location ?? enriched?.location ?? null;
 
   function handleNotesBlur() {
     onNotesUpdate(notes.trim() === "" ? null : notes.trim());
@@ -71,7 +72,7 @@ export default function ItemCard({ item, onRemove, onNotesUpdate }: Props) {
       {isExpanded && (
         <div className="pt-1 space-y-2 text-sm">
           {description && <p>{description}</p>}
-          {openingHours && (
+          {openingHours != null && (
             <p className="text-muted-foreground">
               <span className="font-medium text-foreground">Hours: </span>
               {openingHours}

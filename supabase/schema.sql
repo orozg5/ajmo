@@ -163,3 +163,28 @@ create policy "Owner can modify plan" on plans for all using (auth.uid() = owner
 -- Places is readable by all authenticated users (autocomplete), writable by backend only
 create policy "Authenticated users can read places" on places for select using (auth.role() = 'authenticated');
 -- No insert/update policy for places — only service_role (backend) can write
+
+-- Trigger: auto-create a profile row when a new user signs up via Supabase Auth.
+-- Required because user_preferences FK references profiles(id) — without this,
+-- upsert_preferences fails with a FK violation for new users.
+create or replace function handle_new_user()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  insert into public.profiles (id, username, display_name, avatar_url)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data->>'preferred_username', split_part(new.email, '@', 1)),
+    coalesce(new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'name'),
+    new.raw_user_meta_data->>'avatar_url'
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+create or replace trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure handle_new_user();

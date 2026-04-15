@@ -10,18 +10,14 @@ import SkeletonCard from "@/features/plans/components/SkeletonCard";
 
 interface Props {
   planId: string;
-  userId: string;
-  destination: string;
   days: PlanDay[];
   onAddItem: (dayId: string, payload: AddItemPayload) => void;
   initialSuggestions?: AiSuggestion[] | null;
 }
 
-export default function SuggestionsStrip({ planId, userId, destination, days, onAddItem, initialSuggestions }: Props) {
+export default function SuggestionsStrip({ planId, days, onAddItem, initialSuggestions }: Props) {
   const { suggestions, isLoading, error, refresh, addingNames, addSuggestion } = useAiSuggestions({
     planId,
-    userId,
-    destination,
     onAddItem,
     initialSuggestions,
   });

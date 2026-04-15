@@ -1,9 +1,10 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
+from app.auth import get_current_user
 from app.schemas.ai import (
     AiSuggestionItemResponse,
     AiSuggestionsResponse,
@@ -21,7 +22,6 @@ from app.services.ai.enrichment import get_place_data
 from app.services.ai.suggestions import get_next_suggestion, get_suggestions
 from app.services.ai.transport import get_cross_city_suggestions, get_same_day_suggestions
 from app.services.plans.days import list_days_with_items
-from app.services.plans.crud import get_plan
 from app.services.users.preferences import get_preferences
 
 logger = logging.getLogger(__name__)
@@ -100,21 +100,15 @@ async def enrich_batch_route(body: EnrichBatchRequest) -> list[EnrichedItemRespo
 
 
 @router.post("/suggestions")
-async def suggest_items_route(body: SuggestionsRequest) -> AiSuggestionsResponse:
+async def suggest_items_route(
+    body: SuggestionsRequest,
+    current_user: str = Depends(get_current_user),
+) -> AiSuggestionsResponse:
     """
     Generate AI suggestions for a travel plan based on destination, existing items,
     and the user's saved preferences. Reads from plans.suggestions (JSONB); calls
     LLM only on a miss or when force_refresh=True.
     """
-    try:
-        plan = await get_plan(body.plan_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-
-    destination: str | None = plan.get("destination")
-    if not destination:
-        raise HTTPException(status_code=422, detail="Plan has no destination set")
-
     try:
         days = await list_days_with_items(body.plan_id)
     except Exception:
@@ -128,14 +122,13 @@ async def suggest_items_route(body: SuggestionsRequest) -> AiSuggestionsResponse
 
     # Preferences are optional — missing preferences degrade gracefully
     try:
-        preferences = await get_preferences(body.user_id)
+        preferences = await get_preferences(current_user)
     except Exception:
-        logger.warning("Could not load preferences for user %s — proceeding without", body.user_id)
+        logger.warning("Could not load preferences for user %s — proceeding without", current_user)
         preferences = None
 
     try:
         suggestions = await get_suggestions(
-            destination,
             body.plan_id,
             existing_names,
             preferences,
@@ -152,22 +145,16 @@ async def suggest_items_route(body: SuggestionsRequest) -> AiSuggestionsResponse
 
 
 @router.post("/suggestions/next")
-async def next_suggestion_route(body: NextSuggestionRequest) -> AiSuggestionItemResponse:
+async def next_suggestion_route(
+    body: NextSuggestionRequest,
+    current_user: str = Depends(get_current_user),
+) -> AiSuggestionItemResponse:
     """
     Return a single new suggestion not in exclude_names.
 
     Checks plans.suggestions first (zero tokens). Calls LLM with temperature=0.6
     only if all saved suggestions are exhausted.
     """
-    try:
-        plan = await get_plan(body.plan_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-
-    destination: str | None = plan.get("destination")
-    if not destination:
-        raise HTTPException(status_code=422, detail="Plan has no destination set")
-
     try:
         days = await list_days_with_items(body.plan_id)
     except Exception:
@@ -179,15 +166,14 @@ async def next_suggestion_route(body: NextSuggestionRequest) -> AiSuggestionItem
     ]
 
     try:
-        preferences = await get_preferences(body.user_id)
+        preferences = await get_preferences(current_user)
     except Exception:
-        logger.warning("Could not load preferences for user %s — proceeding without", body.user_id)
+        logger.warning("Could not load preferences for user %s — proceeding without", current_user)
         preferences = None
 
     try:
         suggestion = await get_next_suggestion(
             body.plan_id,
-            destination,
             existing_names,
             preferences,
             body.exclude_names,
@@ -207,6 +193,7 @@ async def next_suggestion_route(body: NextSuggestionRequest) -> AiSuggestionItem
 @router.post("/transport-suggestions/day")
 async def get_day_transport_route(
     body: DayTransportRequest,
+    current_user: str = Depends(get_current_user),
 ) -> TransportSuggestionsResponse:
     """
     Generate transport suggestions for all consecutive item pairs within a single day.
@@ -230,6 +217,7 @@ async def get_day_transport_route(
 @router.post("/transport-suggestions/cross-city")
 async def get_cross_city_transport_route(
     body: CrossCityTransportRequest,
+    current_user: str = Depends(get_current_user),
 ) -> TransportSuggestionsResponse:
     """
     Generate transport suggestions for inter-city transitions only.

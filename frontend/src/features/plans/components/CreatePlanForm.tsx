@@ -16,7 +16,6 @@ import { createPlan, createDestination } from "@/lib/api";
 import { useDestinations, computeAvailableDays } from "@/features/plans/hooks/useDestinations";
 
 const schema = z.object({
-  owner_id: z.string().min(1, "Owner ID is required"), // temp — replaced by auth.uid() when auth lands
   title: z.string().min(1, "Title is required"),
   date_from: z.string().optional(),
   date_to: z.string().optional(),
@@ -32,7 +31,6 @@ export default function CreatePlanForm() {
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
-      owner_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", // dev seed — replaced by auth.uid() when auth lands
       title: "",
       date_from: "",
       date_to: "",
@@ -90,20 +88,6 @@ export default function CreatePlanForm() {
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-        <FormField
-          control={form.control}
-          name="owner_id"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Owner ID</FormLabel>
-              <FormControl>
-                <Input placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
         <FormField
           control={form.control}
           name="title"

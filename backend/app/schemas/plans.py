@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 
 class PlanCreate(BaseModel):
-    owner_id: str = Field(..., description="UUID of the plan owner")
+    owner_id: str | None = Field(None, description="UUID of the plan owner; injected from JWT by the route handler")
     title: str = Field(..., min_length=1, description="Plan title")
     description: str | None = None
     destination: str | None = None

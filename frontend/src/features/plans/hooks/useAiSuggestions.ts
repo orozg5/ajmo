@@ -7,8 +7,6 @@ import { isAbortError } from "@/lib/utils";
 
 interface UseAiSuggestionsOptions {
   planId: string;
-  userId: string;
-  destination: string;
   onAddItem: (dayId: string, payload: AddItemPayload) => void;
   initialSuggestions?: AiSuggestion[] | null;
 }
@@ -22,7 +20,7 @@ interface UseAiSuggestionsReturn {
   addSuggestion: (suggestion: AiSuggestion, dayId: string) => Promise<void>;
 }
 
-export function useAiSuggestions({ planId, userId, destination, onAddItem, initialSuggestions }: UseAiSuggestionsOptions): UseAiSuggestionsReturn {
+export function useAiSuggestions({ planId, onAddItem, initialSuggestions }: UseAiSuggestionsOptions): UseAiSuggestionsReturn {
   const [suggestions, setSuggestions] = useState<AiSuggestion[]>(initialSuggestions ?? []);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +36,7 @@ export function useAiSuggestions({ planId, userId, destination, onAddItem, initi
       setIsLoading(true);
       setError(null);
       try {
-        const data = await getSuggestions(planId, userId, forceRefresh, undefined, controller.signal);
+        const data = await getSuggestions(planId, forceRefresh, undefined, controller.signal);
         if (!controller.signal.aborted) {
           setSuggestions(data.suggestions);
         }
@@ -53,7 +51,7 @@ export function useAiSuggestions({ planId, userId, destination, onAddItem, initi
         }
       }
     },
-    [planId, userId],
+    [planId],
   );
 
   useEffect(() => {
@@ -77,7 +75,7 @@ export function useAiSuggestions({ planId, userId, destination, onAddItem, initi
         if (suggestion.enriched) {
           aiData = suggestion.enriched;
         } else {
-          const results = await enrichBatch([{ name: suggestion.name, destination, item_type: suggestion.item_type }]);
+          const results = await enrichBatch([{ name: suggestion.name, destination: suggestion.destination_city ?? "", item_type: suggestion.item_type }]);
           if (!results[0]) throw new Error("enrichBatch returned empty");
           aiData = results[0];
         }
@@ -99,7 +97,7 @@ export function useAiSuggestions({ planId, userId, destination, onAddItem, initi
 
         // Append a replacement (silent on failure)
         try {
-          const next = await getNextSuggestion(planId, userId, remainingNames);
+          const next = await getNextSuggestion(planId, remainingNames);
           setSuggestions((prev) => {
             if (prev.some((s) => s.slug === next.slug)) return prev;
             return [...prev, next];
@@ -117,7 +115,7 @@ export function useAiSuggestions({ planId, userId, destination, onAddItem, initi
         });
       }
     },
-    [destination, onAddItem, planId, userId],
+    [onAddItem, planId],
   );
 
   return { suggestions, isLoading, error, refresh, addingNames, addSuggestion };

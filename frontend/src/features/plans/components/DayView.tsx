@@ -198,7 +198,6 @@ export default function DayView({ day, destinations, onAddItem, onRemoveItem, on
               <ItemSearch
                 key={`${dest.id}-${searchKey}`}
                 destination={`${dest.city}, ${dest.country}`}
-                destinationId={dest.id}
                 onEnrich={makeHandleEnrich(dest.id)}
               />
               {pendingItem?.destinationId === dest.id && (

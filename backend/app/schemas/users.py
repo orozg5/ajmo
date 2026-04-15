@@ -8,7 +8,6 @@ from pydantic import BaseModel
 
 
 class UserPreferencesUpdate(BaseModel):
-    user_id: str
     interest_tags: list[str] | None = None
     dietary: list[str] | None = None
     budget: str | None = None

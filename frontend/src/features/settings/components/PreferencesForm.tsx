@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { getPreferences, upsertPreferences, type UserPreferences } from "@/lib/api";
+import { getPreferences, upsertPreferences, type UserPreferencesUpdate } from "@/lib/api";
 
 // Intentionally configurable — options shown in the dietary toggles
 const DIETARY_OPTIONS = ["Vegetarian", "Vegan", "Halal", "Gluten-free"];
@@ -13,11 +14,7 @@ const DIETARY_OPTIONS = ["Vegetarian", "Vegan", "Halal", "Gluten-free"];
 // Intentionally configurable — options shown in the budget toggle group
 const BUDGET_OPTIONS = ["Budget", "Mid-range", "Luxury"];
 
-interface Props {
-  userId: string;
-}
-
-export default function PreferencesForm({ userId }: Props) {
+export default function PreferencesForm() {
   const [interestTags, setInterestTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
   const [dietary, setDietary] = useState<string[]>([]);
@@ -28,7 +25,7 @@ export default function PreferencesForm({ userId }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getPreferences(userId)
+    getPreferences()
       .then((prefs) => {
         setInterestTags(prefs.interest_tags ?? []);
         setDietary(prefs.dietary ?? []);
@@ -41,7 +38,7 @@ export default function PreferencesForm({ userId }: Props) {
           setError("Failed to load preferences.");
         }
       });
-  }, [userId]);
+  }, []);
 
   function addTag() {
     const trimmed = tagInput.trim();
@@ -65,8 +62,7 @@ export default function PreferencesForm({ userId }: Props) {
     setSaved(false);
     setError(null);
     try {
-      const payload: UserPreferences = {
-        user_id: userId,
+      const payload: UserPreferencesUpdate = {
         interest_tags: interestTags.length > 0 ? interestTags : null,
         dietary: dietary.length > 0 ? dietary : null,
         budget: budget || null,

@@ -1,8 +1,9 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
+from app.auth import get_current_user
 from app.schemas.itinerary import PlanItemCreate, PlanItemNotesUpdate, PlanItemResponse
 from app.services.plans.items import create_item, delete_item, update_item_notes
 
@@ -12,7 +13,12 @@ router = APIRouter(prefix="/plans", tags=["items"])
 
 
 @router.post("/{plan_id}/days/{day_id}/items", status_code=201)
-async def create_item_route(plan_id: str, day_id: str, body: PlanItemCreate) -> PlanItemResponse:
+async def create_item_route(
+    plan_id: str,
+    day_id: str,
+    body: PlanItemCreate,
+    current_user: str = Depends(get_current_user),
+) -> PlanItemResponse:
     """Add an item to a day."""
     try:
         return await create_item(plan_id, day_id, body.model_dump(exclude_none=True))
@@ -24,7 +30,12 @@ async def create_item_route(plan_id: str, day_id: str, body: PlanItemCreate) -> 
 
 
 @router.patch("/{plan_id}/items/{item_id}")
-async def update_item_notes_route(plan_id: str, item_id: str, body: PlanItemNotesUpdate) -> PlanItemResponse:
+async def update_item_notes_route(
+    plan_id: str,
+    item_id: str,
+    body: PlanItemNotesUpdate,
+    current_user: str = Depends(get_current_user),
+) -> PlanItemResponse:
     """Update the notes field of an item."""
     try:
         return await update_item_notes(item_id, body.notes)
@@ -36,7 +47,11 @@ async def update_item_notes_route(plan_id: str, item_id: str, body: PlanItemNote
 
 
 @router.delete("/{plan_id}/items/{item_id}", status_code=204)
-async def delete_item_route(plan_id: str, item_id: str) -> Response:
+async def delete_item_route(
+    plan_id: str,
+    item_id: str,
+    current_user: str = Depends(get_current_user),
+) -> Response:
     """Delete an item by id."""
     try:
         await delete_item(item_id)

@@ -1,225 +1,79 @@
 # Backend — Conventions & Architecture
 
-## Backend conventions
+## Conventions
 
-- FastAPI with async everywhere (`async def` for all routes)
-- All routes go in `/backend/app/routes/`, one file per domain (plans.py, ai.py, etc.)
-- All business logic goes in `/backend/app/services/`, organised into four domain subdirectories: `ai/`, `places/`, `plans/`, `users/`
-- Supabase client: import `get_supabase_client()` from `app/db.py` — never call `create_client()` directly in service files
-- Shared constants (VALID_ITEM_TYPES, etc.): define in `app/constants.py`, import from there — never duplicate across files
-- Shared LLM utilities (fence stripping, quota detection, JSON parsing, LLM call with fallback): define in `app/services/ai/llm.py`, import from there — never duplicate across service files
-- Shared place enrichment orchestrator: `app/services/ai/enrichment.py` — `get_place_data(name, destination, item_type)` is the single entry point for all place lookups (slug alias → cache → Tavily → LLM); routes call this directly — never re-implement inline
-- Background cache cleanup: `app/services/places/cleanup.py` — `start_cache_cleanup()` is called in `main.py` on startup; runs a loop every 6 hours deleting expired rows from `ai_attraction_cache` where `expires_at < now`
-- Pydantic models (request and response): define in `app/schemas/`, one file per domain matching the route domain (`ai.py`, `plans.py`, `itinerary.py`, `places.py`, `users.py`, `destinations.py`). Request models use a domain prefix (e.g. `PlanCreate`, `PlanDayCreate`, `DestinationCreate`). Response models end in `Response` (e.g. `PlanResponse`, `PlanItemResponse`, `AiSuggestionItemResponse`). All route handlers must declare a typed return annotation using these models.
-- Config: `pydantic_settings.BaseSettings` in `app/config.py` reads `.env` automatically; required fields raise `ValidationError` at startup if missing; optional fields (`GROQ_API_KEY`, `FALLBACK_AI_MODEL`) default to `None`; `CORS_ORIGINS` is required — set as a JSON array in `.env` (e.g. `CORS_ORIGINS=["http://localhost:3000"]`)
-- Logging: `logging.basicConfig(level=INFO, ...)` called in `main.py` before `FastAPI()` creation
-- Supabase is accessed via service_role key in backend (bypasses RLS intentionally)
+- FastAPI with `async def` for all routes
+- All routes in `app/routes/`, one file per domain; route handlers named `{action}_{noun}_route` (e.g., `create_plan_route`, `autocomplete_places_route`)
+- All business logic in `app/services/`, organized by domain: `ai/`, `places/`, `plans/`, `users/`
+- Supabase client: import `get_supabase_client()` from `app/db.py` — never call `create_client()` directly; variable always named `supabase` in service files
+- Shared constants and shared validators in `app/constants.py` — `VALID_ITEM_TYPES` and `validate_item_type()` live here; import from there, never duplicate
+- Shared LLM utilities in `app/services/ai/llm.py` — never re-implement inline
+- Shared enrichment orchestrator: `app/services/ai/enrichment.py` — `get_place_data(name, destination, item_type)` is the single entry point; never re-implement inline
+- Pydantic schemas in `app/schemas/`, one file per domain. Request models prefixed by domain (`PlanCreate`, `DestinationCreate`). Response models end in `Response` (`PlanResponse`, `AiSuggestionItemResponse`). All route handlers must declare a typed return annotation.
+- `item_type` validation: call `validate_item_type()` from `app/constants.py` via a `@field_validator` on the schema — never validate inline in route handlers
+- Config: `pydantic_settings.BaseSettings` in `app/config.py`; required fields raise `ValidationError` at startup; optional fields default to `None`; `CORS_ORIGINS` required as JSON array in `.env`
+- Services return `None` for not-found; route handlers raise `HTTPException(404)` — never raise HTTP exceptions from service files
+- Error pattern in routes: `ValueError → 422`, uncaught `Exception → 500` with `logger.exception()`
+- Router tags: one distinct tag per route file — `"plans"`, `"days"`, `"items"`, `"destinations"`, `"places"`, `"ai"`, `"users"`
+- Type hints: `X | None` union syntax (Python 3.10+) — never `Optional[X]`
+- No underscore-prefixed names — module privacy is enforced by not importing, not by naming convention
 - `model_dump(mode="json")` required on Pydantic date fields before passing to supabase-py
-- `.limit(1).execute()` — NOT `.maybe_single()` for Supabase single-row queries (supabase-py returns None for the entire result object on no match with maybe_single, not just `.data`)
-- All new backend service/route files must follow supabase-service-pattern SKILL exactly
-- Supabase client variable must always be named `supabase` in all service files — never `sb`, `supabase_client`, or any other alias
-- No underscore-prefixed names (`_foo`, `_BAR`) — Python module privacy is enforced by not importing; use plain names for all module-level constants, helpers, and functions
-- Type hints: use `X | None` union syntax (Python 3.10+) — never `Optional[X]` from `typing`
-- Services return `None` for not-found cases; route handlers raise `HTTPException(404)` — never raise HTTP exceptions from service files
-- All Pydantic request/response schemas go in `app/schemas/` — never define models in route files
-- Route handler functions must be named `{action}_{noun}_route` (e.g. `create_plan_route`, `autocomplete_places_route`) — never bare names
-- Router tags: one distinct tag per route file — `"plans"`, `"days"`, `"items"`, `"destinations"`, `"places"`, `"ai"`, `"users"`; never reuse a tag across two route files
-- `item_type` and other domain-constrained fields must be validated in the Pydantic schema via `@field_validator`, not inline in route handlers — keeps validation co-located with the model and consistent across all endpoints
+- `.limit(1).execute()` for single-row queries — not `.maybe_single()` (supabase-py returns `None` for the entire result on no match)
+- Supabase is accessed via `service_role` key (bypasses RLS intentionally)
+- Background cache cleanup: `app/services/places/cleanup.py` — `start_cache_cleanup()` called in `main.py` on startup; runs every 6 hours
+- All new service/route files must follow the `supabase-service-pattern` skill
 
 ## Database
 
-- Supabase (PostgreSQL) — schema is in /supabase/schema.sql
-- RLS is enabled on all tables — AI cache tables and places table are backend-only (service_role bypasses RLS)
-- yjs_state column in plans is a BYTEA blob — never modify it directly, only via y-websocket
+- Supabase (PostgreSQL) — schema at `/supabase/schema.sql`
+- RLS enabled on all tables; AI cache tables and `places` are backend-only (service_role bypasses RLS)
+- `yjs_state` in `plans` is a BYTEA blob — never write it directly; only y-websocket writes it
 
 ## Real-time collaboration
 
-- Yjs CRDT for conflict-free state — y-websocket server manages rooms (one per plan)
-- On room close, y-websocket flushes binary CRDT state to plans.yjs_state
-- Never write itinerary state directly to plan_items during a live session
+- Yjs CRDT — y-websocket server manages one room per plan; on room close it flushes binary state to `plans.yjs_state`
 
-## AI / RAG pattern — two-layer cache
+## AI / RAG — two-layer cache
 
-Enrichment splits data into two tiers:
+Enrichment data has two distinct lifecycles, so it's split across two tables:
 
 **Layer 1 — `places` table (permanent, no TTL)**
+Stable fields: name, destination, item_type, description, location, image_url. Populated on first enrichment, never expires. Powers autocomplete globally — once any user enriches a place, all subsequent users get instant autocomplete results.
 
-- Populated on first enrichment, never expires
-- Stores stable data: name, destination, item_type, description, location, image_url
-- Powers autocomplete: queried on every keystroke (substring match on name + destination)
-- First user to search for a place seeds it; all subsequent users get autocomplete instantly
+**Layer 2 — `ai_attraction_cache` (TTL 24h)**
+Volatile fields: price_range, opening_hours, tips, etc. Re-fetched via web search + LLM on cache miss. Linked to `places` by the same slug key.
 
-**Layer 2 — `ai_attraction_cache` (fresh data, TTL 24h)**
+### Canonicalization and slug aliases
 
-- Stores volatile data: price_range, opening_hours, tips, reservation_tips, etc.
-- Expires after 24h — re-fetched via web search + LLM on cache miss
-- Linked to places table by the same slug key
+Raw input (`"Hilt"`) can't be used as a cache key — it won't match `"hilton-paris-opera-hotel"`. Solution:
 
-**Enrichment flow (first user):**
+1. On a cache miss, the LLM returns a `canonical_name` (official full name).
+2. All writes use a slug derived from `canonical_name`, not raw input.
+3. A `slug_aliases` table maps raw_slug → canonical_slug. After every LLM call, the raw input slug is written there. Subsequent requests resolve the alias and return cached data without calling the LLM.
 
-1. No autocomplete (places table empty for this item)
-2. Debounce fires → POST /ai/enrich
-3. Cache miss on both layers → web search + Gemini runs
-4. Backend splits response: stable fields → INSERT places, fresh fields → INSERT ai_attraction_cache
-5. Full combined result returned to user instantly (no extra wait)
+**Pre-check flow:**
+1. Build `raw_slug` from input → check `slug_aliases` → resolve to `canonical_slug`
+2. Cache hit on `ai_attraction_cache[canonical_slug]` → return immediately
+3. Cache miss → Tavily search + LLM → upsert `places` + `ai_attraction_cache` (24h TTL) + `slug_aliases`
 
-**Enrichment flow (subsequent users):**
+### LLM provider chain
 
-1. Autocomplete fires immediately on every keystroke → GET /places/autocomplete → dropdown appears
-2. Enrichment is suppressed while the dropdown is open — user must select first
-3. User selects suggestion → input fills, dropdown closes → enrichment fires immediately (0ms)
-4. places table always has stable data; ai_attraction_cache hit → return immediately / miss → re-fetch fresh fields only
-5. If autocomplete returns no results → enrichment fires after 700ms debounce (new place fallback)
+Primary: Google Gemini (`AI_MODEL` env var). Fallback: Groq (`GROQ_API_KEY` + `FALLBACK_AI_MODEL`). Chain order via `AI_PROVIDER_CHAIN` env var (default: `"ollama,gemini,groq"`). `is_quota_error()` in `llm.py` detects quota/rate-limit signals (429, RESOURCE_EXHAUSTED, RATE_LIMIT, QUOTA) and triggers automatic fallback.
 
-**LLM (primary):** Google Gemini — `GOOGLE_API_KEY` + `AI_MODEL` env vars, never hardcoded
-**LLM (fallback):** Groq — optional `GROQ_API_KEY` + `FALLBACK_AI_MODEL`; activated automatically when Gemini returns a 429/quota error
-**LLM output coercion:** all parsed fields are normalised to their expected type after parsing — list fields (`_LIST_FIELDS`: `tips`, `amenities`) are always `list[str]`; all other fields are always `str`; prevents 500s from the LLM returning arrays for scalar fields
-**Autocomplete endpoint:** GET /places/autocomplete?q=&destination=&item_type=
+### LLM output coercion
 
-## Shared LLM utilities (`app/services/ai/llm.py`)
+After parsing LLM JSON, list fields (`tips`, `amenities`) are coerced to `list[str]` and all other fields to `str`. This prevents 500s when the LLM returns an array for a scalar field.
 
-All LLM interaction primitives live here. `app/services/ai/suggestions.py` imports from this module — never re-implement inline.
+## Features
 
-- `strip_markdown_fences(text)` — strips ` ```json ... ``` ` wrappers the LLM may add despite instructions
-- `is_quota_error(exc)` — returns True if exception message contains 429, RESOURCE_EXHAUSTED, RATE_LIMIT, or QUOTA
-- `parse_llm_json(raw)` — strips fences, parses JSON; falls back to regex `\{.*\}` extraction if `json.loads` fails; raises `ValueError` if nothing parseable
-- `call_llm_with_fallback(prompt, temperature)` — invokes primary LLM (Gemini via `AI_MODEL`), catches quota errors and retries with Groq (`FALLBACK_AI_MODEL`); returns raw text content
-
-## Cache design decisions
-
-### Why a two-layer cache?
-
-Enrichment data splits naturally into two lifecycles:
-
-- Stable data (name, description, location, image) almost never changes — caching it forever
-  in the `places` table is safe and powers instant autocomplete for all users globally.
-- Fresh data (price, hours, tips) goes stale within days — a 24h TTL in
-  `ai_attraction_cache` balances freshness against Gemini API cost.
-  Splitting by lifecycle avoids either over-fetching stable data or serving stale volatile data.
-
-### Why a permanent places table instead of just the cache?
-
-The ai_attraction_cache is keyed by slug and expires. If it expires and the user never
-returns, the place disappears. The places table is the durable knowledge base — once a place
-is confirmed real by Gemini, it exists forever for autocomplete, regardless of cache TTL.
-This also means the second user to search for any place gets autocomplete instantly,
-without waiting for enrichment to complete.
-
-### The canonicalization problem
-
-Users type partial or misspelled names ("Hilt" instead of "Hilton Paris Opera"). Raw input
-cannot be used as a cache key reliably — "hilt-hotel" will never match "hilton-paris-opera-hotel".
-Solution: on a cache miss, Gemini is prompted to return a canonical_name field (the official,
-full name of the place). All writes to places and ai_attraction_cache use the canonical slug
-derived from canonical_name, not the raw input.
-
-### The slug alias table
-
-Canonicalization solves writes, but the pre-check still uses the raw input slug. Without
-a mapping, "Hilt" will always miss the cache even after Gemini has already confirmed and
-stored "Hilton Paris Opera".
-Solution: a slug_aliases table maps raw_slug → canonical_slug. After every Gemini call,
-the raw input slug is written to slug_aliases pointing to the canonical slug. On subsequent
-requests, the pre-check hits slug_aliases first, resolves to the canonical slug, and returns
-cached data — no Gemini call needed. This scales to any number of users because the alias
-lookup is a single primary key read.
-
-### Pre-check flow (with alias resolution)
-
-1. Build raw_slug from user input
-2. Check slug_aliases for raw_slug → canonical_slug mapping
-3. If alias exists: check ai_attraction_cache[canonical_slug] → HIT: return immediately
-4. If no alias or cache expired: call Gemini with canonical_name in response schema
-6. Build canonical_slug from canonical_name
-6b. Check ai_attraction_cache[canonical_slug] — if already cached (different raw input, same place): store alias + return
-7a. Upsert places (canonical_slug, canonical_name, stable fields)
-7b. Insert ai_attraction_cache (canonical_slug, fresh fields, TTL 24h)
-8. Insert slug_aliases (raw_slug → canonical_slug)
-9. Return result
-
-### Why not fuzzy search on the places table instead?
-
-A prefix/ILIKE query on places.name for partial input is ambiguous — "hilt" matches
-"Hilton", "Hilton Garden Inn", "Hilton Prague" etc. Without knowing user intent, you cannot
-confidently select one result and skip enrichment. The alias table avoids this entirely
-by recording exactly what the user meant after Gemini confirmed it.
-
-## Current working features
-
-- POST /ai/enrich — unified enrichment endpoint for five item types
-  - Accepted item_type values: attraction, restaurant, hotel, transport, activity
-  - Request body: { name, destination, item_type }
-  - Flow: build raw_slug → resolve slug_aliases → check ai_attraction_cache → (hit) fetch places + return merged / (miss) Tavily search → Gemini → upsert places (stable) + upsert ai_attraction_cache (fresh, TTL 24h) → store slug alias → return
-  - Client disconnect detection: backend races enrichment against request.is_disconnected() poll (100ms); cancels the asyncio task and returns 499 if client drops connection mid-flight. Does NOT await after cancel — is_disconnected() blocks indefinitely on live connections on fast (cache hit) paths.
-  - Files: /backend/app/services/ai/enrichment.py, /backend/app/routes/ai.py
-  - Model: set via AI_MODEL in .env
-  - Per-type response fields:
-    - attraction: description, opening_hours, price_range, tips
-    - restaurant: description, cuisine, price_range, opening_hours, reservation_tips
-    - hotel: description, amenities, check_in_time, price_range, booking_tips
-    - transport: description, schedule, price_range, booking_tips
-    - activity: description, duration, price_range, booking_tips, tips
-
-- POST /ai/enrich-batch — batch enrichment for up to 5 items concurrently
-  - Request body: `{ items: [{ name, destination, item_type }, ...] }`
-  - Runs all enrichments concurrently via `asyncio.gather`; returns results in input order
-  - File: /backend/app/routes/ai.py
-
-- Places table + autocomplete — permanent knowledge base for places, powers autocomplete
-  - GET /places/autocomplete?q=&destination=&item_type= — substring match on name, up to 10 results
-  - places table: slug (canonical), item_type, name, destination, description, location, image_url — no TTL, never expires
-  - slug_aliases table: raw_slug → canonical_slug mapping written after every Gemini call; enables cache hits for partial/misspelled input without re-calling Gemini
-  - Files: /backend/app/services/places/repository.py, /backend/app/routes/places.py
-
-- Plans CRUD — create, read, list, update, delete travel plans
-  - Routes: POST /plans (201), GET /plans/{id}, GET /plans?owner_id=, PATCH /plans/{id}, DELETE /plans/{id}
-  - Files: /backend/app/routes/plans.py, /backend/app/services/plans/crud.py
-  - model_dump(mode="json") required on all Pydantic date fields before passing to supabase-py
-
-- Itinerary — day and item management for a plan
-  - Response models: PlanItemResponse, PlanDayWithItemsResponse — defined in /backend/app/schemas/itinerary.py
-  - Day routes (prefix /plans, tag days): POST /{plan_id}/days/initialize (idempotent), GET /{plan_id}/days, POST /{plan_id}/days (201), DELETE /{plan_id}/days/{day_id} (204)
-  - Item routes (prefix /plans, tag items): POST /{plan_id}/days/{day_id}/items (201), PATCH /{plan_id}/items/{item_id} (notes update), DELETE /{plan_id}/items/{item_id} (204)
-  - Files: /backend/app/routes/plan_days.py, /backend/app/routes/plan_items.py, /backend/app/services/plans/days.py, /backend/app/services/plans/items.py
-  - initialize_days is idempotent — checks for existing days first; creates from date_from/date_to range or a single Day 1 if no dates
-  - item_type validated against VALID_ITEM_TYPES from app/constants.py on create
-  - Days-with-items query uses `.select("*, plan_items(*)")` — single join, not N+1 loops; items sorted by `sort_order` in Python after fetch
-
-- AI suggestions — personalised suggestions across all plan destinations
-  - POST /ai/suggestions — request: `{ plan_id, user_id, force_refresh?, exclude_names? }`
-  - Storage: `plans.suggestions` JSONB column (no separate cache table); loaded in the same query as the plan
-  - Fetches all destinations via `get_destinations_for_plan(plan_id)`; builds a destinations string (e.g. "Zagreb (Croatia), Dubrovnik (Croatia)") included in the LLM prompt so suggestions span all destinations
-  - LLM call: temperature=0.4 via `call_llm_with_fallback`; skipped when plans.suggestions is non-null and force_refresh=false
-  - Pre-warm: after LLM returns suggestions, each is checked against slug_aliases + ai_attraction_cache (zero tokens); cached=true if found
-  - Response: list of `{ name, item_type, one_line (≤60 chars), price_hint, cached, slug, destination_city }`; suggestions with invalid item_types or destination_city not in the plan's cities are filtered out
-  - POST /ai/suggestions/next — request: `{ plan_id, user_id, exclude_names }`; returns single `AiSuggestionItemResponse`
-    - Checks plans.suggestions first (zero tokens); calls LLM with temperature=0.6 only when exhausted
-    - Appends new suggestion to plans.suggestions before returning
-  - Files: `/backend/app/services/ai/suggestions.py`, `/backend/app/routes/ai.py`
-
-- Plan destinations — multi-destination support per plan
-  - POST /plans/{plan_id}/destinations (201), GET /plans/{plan_id}/destinations, DELETE /plans/{plan_id}/destinations/{destination_id} (204)
-  - Tables: plan_destinations (country, city, sort_order, plan_id), plan_destination_days (destination_id, day_number)
-  - plan_items.destination_id (nullable FK → plan_destinations.id, on delete set null) links items to a destination
-  - plans.destination text column kept as legacy fallback — no longer written by new code
-  - DestinationResponse and DestinationCreate defined in /backend/app/schemas/destinations.py
-  - Files: /backend/app/routes/plan_destinations.py, /backend/app/services/plans/destinations.py
-
-- Transport suggestions — same-day and cross-city transport between consecutive plan items
-  - POST /ai/transport-suggestions/day — request: `{ plan_id, day_id }`
-    - Builds consecutive item pairs for all items in the day (spans destination boundaries, so same-day cross-city travel is included)
-    - Calls LLM via `call_llm_with_fallback` (temperature=0.4) to generate 2–3 transport options per pair
-    - Caches results in `plans.transport_suggestions["same_day"][day_id]`; cache is invalidated when new items are inserted between a cached pair's endpoints
-  - POST /ai/transport-suggestions/cross-city — request: `{ plan_id }`
-    - Pairs last item of destination N → first item of destination N+1 for each consecutive destination pair
-    - Handles destinations with no items using sentinel objects (id=None) so empty cities still produce suggestions
-    - Detects already-covered transitions: if a plan_item with `ai_data.cross_city_pair == "srcId->dstId"` exists, that pair is excluded from the response
-    - Caches results in `plans.transport_suggestions["cross_city"]`
-  - Response shape for both: `{ suggestions: [{ source_item_id, source_item_title, source_item_location, destination_item_id, destination_item_title, destination_item_location, source_city, destination_city, source_country, destination_country, source_day_number, destination_day_number, scope, options: [{ name, one_line, price_hint }] }] }`
-  - Files: `/backend/app/services/ai/transport.py`, `/backend/app/routes/ai.py`
-
-- User preferences — per-user travel preferences used to personalise AI suggestions
-  - GET /users/me/preferences?user_id= — returns preferences dict or 404
-  - PUT /users/me/preferences — upserts on `user_id` conflict
-  - Fields: `interest_tags` (string[]), `dietary` (string[]), `budget` (string), `custom_notes` (string)
-  - Files: `/backend/app/services/users/preferences.py`, `/backend/app/routes/users.py`
+| Feature | Route file | Service file |
+|---|---|---|
+| Plans CRUD | `routes/plans.py` | `services/plans/crud.py` |
+| Itinerary days | `routes/plan_days.py` | `services/plans/days.py` |
+| Itinerary items | `routes/plan_items.py` | `services/plans/items.py` |
+| Plan destinations | `routes/plan_destinations.py` | `services/plans/destinations.py` |
+| Place autocomplete | `routes/places.py` | `services/places/repository.py` |
+| AI enrichment (`/ai/enrich`, `/ai/enrich-batch`) | `routes/ai.py` | `services/ai/enrichment.py` |
+| AI suggestions (`/ai/suggestions`, `/ai/suggestions/next`) | `routes/ai.py` | `services/ai/suggestions.py` |
+| Transport suggestions (`/ai/transport-suggestions/*`) | `routes/ai.py` | `services/ai/transport.py` |
+| User preferences | `routes/users.py` | `services/users/preferences.py` |

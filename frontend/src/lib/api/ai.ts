@@ -107,7 +107,6 @@ export const autocompletePlaces = (
 
 export const getSuggestions = (
   planId: string,
-  userId: string,
   forceRefresh = false,
   excludeNames?: string[],
   signal?: AbortSignal,
@@ -117,7 +116,6 @@ export const getSuggestions = (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       plan_id: planId,
-      user_id: userId,
       force_refresh: forceRefresh,
       ...(excludeNames?.length ? { exclude_names: excludeNames } : {}),
     }),
@@ -126,14 +124,13 @@ export const getSuggestions = (
 
 export const getNextSuggestion = (
   planId: string,
-  userId: string,
   excludeNames: string[],
   signal?: AbortSignal,
 ): Promise<AiSuggestion> =>
   apiFetch<AiSuggestion>("/ai/suggestions/next", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ plan_id: planId, user_id: userId, exclude_names: excludeNames }),
+    body: JSON.stringify({ plan_id: planId, exclude_names: excludeNames }),
     signal,
   });
 

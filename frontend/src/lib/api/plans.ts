@@ -17,7 +17,6 @@ export interface Plan {
 }
 
 export interface CreatePlanPayload {
-  owner_id: string;
   title: string;
   destination?: string;
   description?: string;
@@ -84,10 +83,11 @@ export const createPlan = (data: CreatePlanPayload): Promise<Plan> =>
     body: JSON.stringify(data),
   });
 
-export const getPlan = (id: string): Promise<Plan> => apiFetch<Plan>(`/plans/${id}`);
+export const getPlan = (id: string, accessToken?: string | null): Promise<Plan> =>
+  apiFetch<Plan>(`/plans/${id}`, undefined, accessToken);
 
-export const initializeDays = (planId: string): Promise<PlanDay[]> =>
-  apiFetch<PlanDay[]>(`/plans/${planId}/days/initialize`, { method: "POST" });
+export const initializeDays = (planId: string, accessToken?: string | null): Promise<PlanDay[]> =>
+  apiFetch<PlanDay[]>(`/plans/${planId}/days/initialize`, { method: "POST" }, accessToken);
 
 export const getDays = (planId: string): Promise<PlanDay[]> => apiFetch<PlanDay[]>(`/plans/${planId}/days`);
 
@@ -118,8 +118,8 @@ export const updateItemNotes = (planId: string, itemId: string, notes: string | 
     body: JSON.stringify({ notes }),
   });
 
-export const getDestinations = (planId: string): Promise<DestinationResponse[]> =>
-  apiFetch<DestinationResponse[]>(`/plans/${planId}/destinations`);
+export const getDestinations = (planId: string, accessToken?: string | null): Promise<DestinationResponse[]> =>
+  apiFetch<DestinationResponse[]>(`/plans/${planId}/destinations`, undefined, accessToken);
 
 export const createDestination = (
   planId: string,

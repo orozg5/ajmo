@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, field_validator
 
-from app.constants import VALID_ITEM_TYPES
+from app.constants import validate_item_type
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
@@ -26,10 +26,8 @@ class PlanItemCreate(BaseModel):
 
     @field_validator("item_type")
     @classmethod
-    def validate_item_type(cls, v: str) -> str:
-        if v not in VALID_ITEM_TYPES:
-            raise ValueError(f"item_type must be one of {sorted(VALID_ITEM_TYPES)}")
-        return v
+    def check_item_type(cls, v: str) -> str:
+        return validate_item_type(v)
 
 
 class PlanItemNotesUpdate(BaseModel):

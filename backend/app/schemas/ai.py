@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.constants import VALID_ITEM_TYPES
+from app.constants import validate_item_type
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
@@ -16,10 +16,8 @@ class EnrichRequest(BaseModel):
 
     @field_validator("item_type")
     @classmethod
-    def validate_item_type(cls, v: str) -> str:
-        if v not in VALID_ITEM_TYPES:
-            raise ValueError(f"item_type must be one of {sorted(VALID_ITEM_TYPES)}")
-        return v
+    def check_item_type(cls, v: str) -> str:
+        return validate_item_type(v)
 
 
 class EnrichBatchRequest(BaseModel):
@@ -28,14 +26,12 @@ class EnrichBatchRequest(BaseModel):
 
 class SuggestionsRequest(BaseModel):
     plan_id: str = Field(..., description="UUID of the plan")
-    user_id: str = Field(..., description="UUID of the user (for preferences lookup)")
     force_refresh: bool = Field(False, description="Skip cache and generate fresh suggestions")
     exclude_names: list[str] = Field(default_factory=list, description="Names already shown or added")
 
 
 class NextSuggestionRequest(BaseModel):
     plan_id: str = Field(..., description="UUID of the plan")
-    user_id: str = Field(..., description="UUID of the user (for preferences lookup)")
     exclude_names: list[str] = Field(default_factory=list, description="Names already shown or added")
 
 

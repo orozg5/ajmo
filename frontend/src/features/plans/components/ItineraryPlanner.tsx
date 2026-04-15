@@ -79,11 +79,9 @@ export default function ItineraryPlanner({ plan, initialDays, destinations }: Pr
 
   return (
     <div className="space-y-4">
-      {plan.destination && (
+      {destinations.length > 0 && (
         <SuggestionsStrip
           planId={plan.id}
-          userId={plan.owner_id}
-          destination={plan.destination}
           days={days}
           onAddItem={addItem}
           initialSuggestions={plan.suggestions}

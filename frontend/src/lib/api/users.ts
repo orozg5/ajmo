@@ -8,10 +8,12 @@ export interface UserPreferences {
   custom_notes: string | null;
 }
 
-export const getPreferences = (userId: string): Promise<UserPreferences> =>
-  apiFetch<UserPreferences>(`/users/me/preferences?${new URLSearchParams({ user_id: userId }).toString()}`);
+export type UserPreferencesUpdate = Omit<UserPreferences, "user_id">;
 
-export const upsertPreferences = (data: UserPreferences): Promise<UserPreferences> =>
+export const getPreferences = (): Promise<UserPreferences> =>
+  apiFetch<UserPreferences>("/users/me/preferences");
+
+export const upsertPreferences = (data: UserPreferencesUpdate): Promise<UserPreferences> =>
   apiFetch<UserPreferences>("/users/me/preferences", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

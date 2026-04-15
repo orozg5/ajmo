@@ -1,8 +1,9 @@
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
+from app.auth import get_current_user
 from app.schemas.plans import PlanCreate, PlanResponse, PlanUpdate
 from app.services.plans.crud import (
     create_plan,
@@ -18,10 +19,15 @@ router = APIRouter(prefix="/plans", tags=["plans"])
 
 
 @router.post("", status_code=201)
-async def create_plan_route(body: PlanCreate) -> PlanResponse:
+async def create_plan_route(
+    body: PlanCreate,
+    current_user: str = Depends(get_current_user),
+) -> PlanResponse:
     """Create a new travel plan."""
     try:
-        return await create_plan(body.model_dump(mode="json"))
+        data = body.model_dump(mode="json")
+        data["owner_id"] = current_user  # always use the authenticated user, ignore any client value
+        return await create_plan(data)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception:
@@ -30,7 +36,10 @@ async def create_plan_route(body: PlanCreate) -> PlanResponse:
 
 
 @router.get("/{plan_id}")
-async def get_plan_route(plan_id: str) -> PlanResponse:
+async def get_plan_route(
+    plan_id: str,
+    current_user: str = Depends(get_current_user),
+) -> PlanResponse:
     """Fetch a single plan by id."""
     try:
         return await get_plan(plan_id)
@@ -43,18 +52,22 @@ async def get_plan_route(plan_id: str) -> PlanResponse:
 
 @router.get("")
 async def list_plans_route(
-    owner_id: str = Query(..., description="UUID of the plan owner"),
+    current_user: str = Depends(get_current_user),
 ) -> list[PlanResponse]:
-    """List all plans belonging to a user."""
+    """List all plans belonging to the authenticated user."""
     try:
-        return await list_user_plans(owner_id)
+        return await list_user_plans(current_user)
     except Exception:
-        logger.exception("Unexpected error listing plans for owner %s", owner_id)
+        logger.exception("Unexpected error listing plans for owner %s", current_user)
         raise HTTPException(status_code=500, detail="Failed to list plans")
 
 
 @router.patch("/{plan_id}")
-async def update_plan_route(plan_id: str, body: PlanUpdate) -> PlanResponse:
+async def update_plan_route(
+    plan_id: str,
+    body: PlanUpdate,
+    current_user: str = Depends(get_current_user),
+) -> PlanResponse:
     """Partially update a plan. yjs_state is never touched here."""
     try:
         return await update_plan(plan_id, body.model_dump(mode="json", exclude_none=True))
@@ -66,7 +79,10 @@ async def update_plan_route(plan_id: str, body: PlanUpdate) -> PlanResponse:
 
 
 @router.delete("/{plan_id}", status_code=204)
-async def delete_plan_route(plan_id: str) -> Response:
+async def delete_plan_route(
+    plan_id: str,
+    current_user: str = Depends(get_current_user),
+) -> Response:
     """Delete a plan by id."""
     try:
         await delete_plan(plan_id)

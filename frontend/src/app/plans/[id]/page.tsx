@@ -1,12 +1,17 @@
 import { getPlan, initializeDays, getDestinations } from "@/lib/api";
+import { createClient } from "@/lib/supabase/server";
 import ItineraryPlanner from "@/features/plans/components/ItineraryPlanner";
 
 export default async function PlanPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const supabase = await createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token ?? null;
+
   const [plan, days, destinations] = await Promise.all([
-    getPlan(id),
-    initializeDays(id),
-    getDestinations(id),
+    getPlan(id, token),
+    initializeDays(id, token),
+    getDestinations(id, token),
   ]);
 
   return (

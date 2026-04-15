@@ -4,8 +4,8 @@ import logging
 from app.constants import VALID_ITEM_TYPES
 from app.db import get_supabase_client
 from app.services.ai.llm import call_llm_with_fallback, parse_llm_json
-from app.services.ai.enrichment import build_cache_key, get_cached_attraction, get_place_data
-from app.services.places.repository import resolve_slug_alias
+from app.services.ai.enrichment import build_cache_key, get_cached_attraction
+from app.services.places.repository import get_place_by_slug, resolve_slug_alias
 from app.services.plans.destinations import get_destinations_for_plan
 
 logger = logging.getLogger(__name__)
@@ -59,24 +59,28 @@ Rules:
     return prompt
 
 
-async def enrich_suggestion_metadata(
-    suggestion: dict,
-    destination: str,
-    model_state: dict | None = None,
-) -> dict:
+async def enrich_suggestion_metadata(suggestion: dict) -> dict:
     """
-    Runs the full enrichment pipeline (cache-first) for a suggestion and embeds
-    the result so the frontend can add items without a second LLM call.
+    Zero-token cache check for a suggestion. Embeds enriched data if already cached
+    so the frontend can add items without a second round-trip. On a cache miss,
+    returns enriched=None — the frontend calls /ai/enrich on demand when the user
+    actually adds the item.
     """
     name = suggestion["name"]
+    destination_city = suggestion.get("destination_city") or ""
     item_type = suggestion["item_type"]
-    try:
-        enriched = await get_place_data(name, destination, item_type, model_state=model_state)
-    except Exception:
-        enriched = None
-    raw_slug = build_cache_key(name, destination, item_type)
+
+    raw_slug = build_cache_key(name, destination_city, item_type)
     canonical_slug = await resolve_slug_alias(raw_slug)
     lookup_slug = canonical_slug if canonical_slug else raw_slug
+
+    cached_data = await get_cached_attraction(lookup_slug)
+    if cached_data is not None:
+        stable = await get_place_by_slug(lookup_slug, item_type)
+        enriched = {**stable, **cached_data} if stable else cached_data
+    else:
+        enriched = None
+
     return {
         **suggestion,
         "slug": lookup_slug,
@@ -159,7 +163,6 @@ async def call_llm_for_suggestions(
 
 
 async def get_suggestions(
-    destination: str,
     plan_id: str,
     existing_item_names: list[str],
     preferences: dict | None,
@@ -181,21 +184,19 @@ async def get_suggestions(
             return saved
 
     plan_destinations = await get_destinations_for_plan(plan_id)
-    destinations_str, cities = format_destinations(plan_destinations, destination)
+    if not plan_destinations:
+        return []
+    destinations_str, cities = format_destinations(plan_destinations, "")
 
     logger.info("Generating suggestions for plan %s (force=%s) — calling LLM", plan_id, force_refresh)
-    model_state: dict = {"use_fallback": False}
     prompt = build_suggestions_prompt(destinations_str, existing_item_names, preferences, exclude_names)
-    suggestions = await call_llm_for_suggestions(prompt, temperature=0.4, model_state=model_state)
+    suggestions = await call_llm_for_suggestions(prompt, temperature=0.4)
 
     if cities is not None:
         suggestions = [s for s in suggestions if s.get("destination_city") in cities]
 
     enriched = list(
-        await asyncio.gather(*[
-            enrich_suggestion_metadata(s, s.get("destination_city") or destination, model_state=model_state)
-            for s in suggestions
-        ])
+        await asyncio.gather(*[enrich_suggestion_metadata(s) for s in suggestions])
     )
 
     await save_plan_suggestions(plan_id, enriched)
@@ -204,7 +205,6 @@ async def get_suggestions(
 
 async def get_next_suggestion(
     plan_id: str,
-    destination: str,
     existing_item_names: list[str],
     preferences: dict | None,
     exclude_names: list[str],
@@ -225,7 +225,9 @@ async def get_next_suggestion(
                 return suggestion
 
     plan_destinations = await get_destinations_for_plan(plan_id)
-    destinations_str, cities = format_destinations(plan_destinations, destination)
+    if not plan_destinations:
+        return None
+    destinations_str, cities = format_destinations(plan_destinations, "")
 
     logger.info("All saved suggestions exhausted for plan %s — calling LLM", plan_id)
     prompt = build_suggestions_prompt(destinations_str, existing_item_names, preferences, exclude_names)
@@ -236,8 +238,7 @@ async def get_next_suggestion(
 
     for suggestion in new_suggestions:
         if suggestion.get("name", "").lower() not in exclude_set:
-            dest_for_slug = suggestion.get("destination_city") or destination
-            enriched = await enrich_suggestion_metadata(suggestion, dest_for_slug)
+            enriched = await enrich_suggestion_metadata(suggestion)
             updated = (saved or []) + [enriched]
             await save_plan_suggestions(plan_id, updated)
             return enriched

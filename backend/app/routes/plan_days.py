@@ -1,8 +1,9 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
+from app.auth import get_current_user
 from app.schemas.itinerary import PlanDayCreate, PlanDayWithItemsResponse
 from app.services.plans.crud import get_plan
 from app.services.plans.days import (
@@ -18,7 +19,10 @@ router = APIRouter(prefix="/plans", tags=["days"])
 
 
 @router.post("/{plan_id}/days/initialize")
-async def initialize_days_route(plan_id: str) -> list[PlanDayWithItemsResponse]:
+async def initialize_days_route(
+    plan_id: str,
+    current_user: str = Depends(get_current_user),
+) -> list[PlanDayWithItemsResponse]:
     """Idempotent setup: create days from the plan's date range if none exist.
     Safe to call on every page load."""
     try:
@@ -34,7 +38,10 @@ async def initialize_days_route(plan_id: str) -> list[PlanDayWithItemsResponse]:
 
 
 @router.get("/{plan_id}/days")
-async def list_days_route(plan_id: str) -> list[PlanDayWithItemsResponse]:
+async def list_days_route(
+    plan_id: str,
+    current_user: str = Depends(get_current_user),
+) -> list[PlanDayWithItemsResponse]:
     """Return all days for a plan with their items."""
     try:
         return await list_days_with_items(plan_id)
@@ -44,7 +51,11 @@ async def list_days_route(plan_id: str) -> list[PlanDayWithItemsResponse]:
 
 
 @router.post("/{plan_id}/days", status_code=201)
-async def create_day_route(plan_id: str, body: PlanDayCreate) -> PlanDayWithItemsResponse:
+async def create_day_route(
+    plan_id: str,
+    body: PlanDayCreate,
+    current_user: str = Depends(get_current_user),
+) -> PlanDayWithItemsResponse:
     """Add a new day to the plan. day_number auto-assigned if not provided."""
     try:
         day_number = body.day_number
@@ -61,7 +72,11 @@ async def create_day_route(plan_id: str, body: PlanDayCreate) -> PlanDayWithItem
 
 
 @router.delete("/{plan_id}/days/{day_id}", status_code=204)
-async def delete_day_route(plan_id: str, day_id: str) -> Response:
+async def delete_day_route(
+    plan_id: str,
+    day_id: str,
+    current_user: str = Depends(get_current_user),
+) -> Response:
     """Delete a day and all its items (cascade)."""
     try:
         await delete_day(day_id)

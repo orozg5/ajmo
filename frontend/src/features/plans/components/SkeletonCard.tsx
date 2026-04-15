@@ -1,3 +1,5 @@
+"use client";
+
 export default function SkeletonCard() {
   return (
     <div className="shrink-0 w-44 rounded-lg border bg-card p-3 flex flex-col gap-2 animate-pulse">

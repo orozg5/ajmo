@@ -98,7 +98,7 @@ async def call_llm_with_fallback(
 
     if model_state is not None and model_state.get("provider"):
         try:
-            start_idx = PROVIDER_LIST.index(model_state["provider"]) + 1
+            start_idx = PROVIDER_LIST.index(model_state["provider"])
         except ValueError:
             start_idx = 0
 

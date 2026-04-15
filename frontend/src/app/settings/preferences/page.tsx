@@ -1,20 +1,16 @@
+import { redirect } from "next/navigation";
+
+import { createClient } from "@/lib/supabase/server";
 import PreferencesForm from "@/features/settings/components/PreferencesForm";
 
-export default async function PreferencesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ user_id?: string }>;
-}) {
-  const { user_id } = await searchParams;
+export default async function PreferencesPage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  if (!user_id) {
-    return (
-      <main className="p-8">
-        <p className="text-sm text-muted-foreground">
-          No user ID provided. Add <code>?user_id=&lt;your-uuid&gt;</code> to the URL.
-        </p>
-      </main>
-    );
+  if (!user) {
+    redirect("/login");
   }
 
   return (
@@ -25,7 +21,7 @@ export default async function PreferencesPage({
           These preferences help the AI suggest places you&apos;ll actually enjoy.
         </p>
       </div>
-      <PreferencesForm userId={user_id} />
+      <PreferencesForm />
     </main>
   );
 }
