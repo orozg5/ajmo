@@ -1,13 +1,18 @@
-import json
+import asyncio
 import logging
 import re
 from datetime import datetime, timedelta, timezone
 
 from tavily import AsyncTavilyClient
+from tavily.errors import BadRequestError
 
 from app.config import settings
 from app.db import get_supabase_client
-from app.services.ai.llm import call_llm_with_fallback, parse_llm_json
+from app.services.ai.llm import call_structured, stream_structured
+from app.services.ai.schemas import EnrichmentResponse
+from app.services.places.country_codes import resolve_country_code
+from app.services.places.geocoding import geocode_with_validation, resolve_timezone
+from app.services.places.images import fetch_wikipedia_image
 from app.services.places.repository import (
     get_place_by_slug,
     resolve_slug_alias,
@@ -20,9 +25,6 @@ logger = logging.getLogger(__name__)
 
 # ── Per-type configuration ────────────────────────────────────────────────────
 
-# Fields that must be JSON arrays of strings in the LLM response
-LIST_FIELDS = {"tips", "amenities"}
-
 SEARCH_QUERY_TEMPLATES = {
     "attraction": "{name} {destination} attraction hours price",
     "restaurant": "{name} {destination} restaurant cuisine price hours reservation",
@@ -31,11 +33,8 @@ SEARCH_QUERY_TEMPLATES = {
     "activity":   "{name} {destination} activity price booking tips",
 }
 
-# Stable fields returned by Gemini → stored permanently in the places table
 STABLE_FIELDS = ["canonical_name", "description", "location", "image_url"]
 
-# Fresh (volatile) fields returned by Gemini → stored in ai_attraction_cache (24h TTL)
-# description intentionally excluded here — it lives in places (stable)
 FRESH_FIELDS = {
     "attraction": ["opening_hours", "price_range", "tips"],
     "restaurant": ["cuisine", "price_range", "opening_hours", "reservation_tips"],
@@ -51,11 +50,10 @@ LEADING_ARTICLE_RE = re.compile(r"^(the|a|an)\s+", re.IGNORECASE)
 
 
 def build_cache_key(name: str, destination: str, item_type: str) -> str:
-    """
-    Generate a deterministic slug used as the primary key in ai_attraction_cache.
-    ("Eiffel Tower", "Paris", "attraction") → "eiffel-tower-paris-attraction"
-    ("The Eiffel Tower", "Paris", "attraction") → "eiffel-tower-paris-attraction"
-    Leading articles (the, a, an) are stripped before slugifying so variants map to the same key.
+    """Generate a deterministic slug keyed on name + destination + type.
+
+    Leading articles (the, a, an) are stripped before slugifying so variants
+    like "Eiffel Tower" and "The Eiffel Tower" collapse to one key.
     """
     normalized_name = LEADING_ARTICLE_RE.sub("", name).strip()
     raw = f"{normalized_name} {destination}".lower()
@@ -67,10 +65,6 @@ def build_cache_key(name: str, destination: str, item_type: str) -> str:
 
 
 async def get_cached_attraction(cache_key: str) -> dict | None:
-    """
-    Return cached data for cache_key if found and not yet expired.
-    Uses server-side gt("expires_at") filter so expired rows are skipped cleanly.
-    """
     supabase = get_supabase_client()
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -88,7 +82,6 @@ async def get_cached_attraction(cache_key: str) -> dict | None:
 
 
 async def store_attraction_cache(cache_key: str, data: dict) -> None:
-    """Upsert enriched data into ai_attraction_cache with a 24-hour TTL."""
     supabase = get_supabase_client()
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(hours=24)
@@ -106,27 +99,28 @@ async def store_attraction_cache(cache_key: str, data: dict) -> None:
 # ── Tavily search ─────────────────────────────────────────────────────────────
 
 
-async def search_item(name: str, destination: str, item_type: str) -> str:
-    """
-    Search Tavily for live web data about the item.
-    Returns a single string of concatenated result snippets for the LLM.
-    Raises RuntimeError if no results are returned (guards against empty LLM prompt).
-    """
+async def search_item(name: str, destination: str, item_type: str, *, deep: bool = False) -> str:
+    """Fetch Tavily context; advanced depth for hotels or a deep retry."""
     client = AsyncTavilyClient(api_key=settings.TAVILY_API_KEY)
     query = SEARCH_QUERY_TEMPLATES[item_type].format(name=name, destination=destination)
 
-    response = await client.search(
-        query=query,
-        search_depth="basic",
-        max_results=5,
-        include_answer=True,
-    )
+    search_depth = "advanced" if (item_type == "hotel" or deep) else "basic"
+    max_results = 8 if item_type == "hotel" else 5
+
+    try:
+        response = await client.search(
+            query=query,
+            search_depth=search_depth,
+            max_results=max_results,
+            include_answer=True,
+        )
+    except BadRequestError as exc:
+        raise RuntimeError(f"Tavily rejected query: {exc}") from exc
 
     results = response.get("results", [])
     if not results:
         raise RuntimeError(f"Tavily returned no results for: {query!r}")
 
-    # Build context: prepend Tavily's own synthesized answer first, then raw snippets
     context_parts: list[str] = []
     if response.get("answer"):
         context_parts.append(response["answer"])
@@ -141,15 +135,9 @@ async def search_item(name: str, destination: str, item_type: str) -> str:
 
 
 def build_prompt(name: str, destination: str, item_type: str, search_context: str) -> str:
-    """Build a type-aware extraction prompt for the LLM."""
-    all_fields = STABLE_FIELDS + FRESH_FIELDS[item_type]
-    schema = {
-        f: ["<item 1>", "<item 2>"] if f in LIST_FIELDS else "<value or null>"
-        for f in all_fields
-    }
-    fields_json = json.dumps(schema, indent=2)
-    return f"""You are a travel information assistant.
-Based on the search results below, extract structured information about this {item_type}.
+    """Type-aware extraction prompt. Structured output handles JSON shape."""
+    fresh = ", ".join(FRESH_FIELDS[item_type])
+    return f"""You are a travel information assistant extracting facts about a {item_type}.
 
 Name: {name}
 Destination: {destination}
@@ -157,116 +145,75 @@ Destination: {destination}
 Search results:
 {search_context}
 
-Respond with ONLY a valid JSON object (no markdown, no explanation) with exactly these keys:
-{fields_json}
-
-Rules:
-- canonical_name: the official full name of this place (e.g. "Hilton Paris Opera" not "Hilton"). Use the most complete, commonly recognised name.
-- location: a specific street address with number (e.g. "5 Avenue Anatole France, 75007 Paris") or a precise named area within the city (e.g. "Champ de Mars, 5th arrondissement, Paris"). NEVER return just a city name like "Toronto, Canada". If no specific address is found, use the name of the nearest landmark or neighborhood.
-- image_url: a direct URL to a representative image if found in the search results; null otherwise.
-- Use null for any field you cannot determine.
-- List fields (shown as arrays above) must be JSON arrays of strings, never a single string."""
+Extract: canonical_name, description, location (specific street address with number OR named area — never just the city), image_url, and these type-specific fields when known: {fresh}.
+Set any field to null when the search results do not support a confident answer. Never invent facts."""
 
 
-async def enrich_with_llm(
-    name: str,
-    destination: str,
-    item_type: str,
-    search_context: str,
-    model_state: dict | None = None,
-) -> dict:
-    """
-    Pass Tavily context to the primary LLM (Gemini) and extract structured data.
-    Falls back to Groq automatically if Gemini hits a quota/rate limit.
-    """
+async def enrich_with_llm(name: str, destination: str, item_type: str, search_context: str) -> dict:
+    """Structured enrichment via call_structured. Returns a plain dict."""
     prompt = build_prompt(name, destination, item_type, search_context)
-    raw_text = await call_llm_with_fallback(prompt, temperature=0, model_state=model_state)
-    parsed = parse_llm_json(raw_text)
-
-    # Ensure all expected keys exist (fill missing optional ones with None)
-    for key in STABLE_FIELDS + FRESH_FIELDS[item_type]:
-        parsed.setdefault(key, None)
-
-    # Coerce all fields to their expected types based on schema
-    for key in list(parsed.keys()):
-        value = parsed[key]
-        if value is None:
-            continue
-        if key in LIST_FIELDS:
-            # Expected: list[str]
-            if isinstance(value, list):
-                parsed[key] = [str(v) for v in value if v is not None]
-            else:
-                parsed[key] = [str(value)]
-        else:
-            # Expected: str
-            if isinstance(value, list):
-                parsed[key] = ", ".join(str(v) for v in value if v is not None) or None
-            elif not isinstance(value, str):
-                parsed[key] = str(value)
-
-    return parsed
+    response: EnrichmentResponse = await call_structured(
+        "enrich", EnrichmentResponse, prompt, temperature=0.0, max_tokens=1024,
+    )
+    return response.model_dump(mode="json", exclude_none=False)
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 
-async def get_place_data(name: str, destination: str, item_type: str, model_state: dict | None = None) -> dict:
-    """
-    Unified lookup: slug_aliases → ai_attraction_cache → places → LLM fallback.
-    Used by both enrichment and suggestions. Returns full merged place data.
+async def get_place_data(name: str, destination: str, item_type: str) -> dict:
+    """Unified lookup: slug_aliases → ai_attraction_cache → places → LLM fallback.
 
-    1. Build a raw slug from user input
-    2. Resolve raw slug → canonical slug via slug_aliases (skips Gemini on repeat inputs)
-    3. Return cached data if available and not expired (TTL 24 h)
-    4. Search Tavily for live web context
-    5. Extract structured JSON via Gemini LLM (includes canonical_name)
-    6. Build canonical slug from canonical_name
-    7. Split response: stable fields → upsert places, fresh fields → ai_attraction_cache
-    8. Store slug alias (raw → canonical) for future pre-check resolution
-    9. Return the full structured data
+    Returns full merged place data (stable + fresh).
     """
-    # Step 1: raw slug from user input
     raw_slug = build_cache_key(name, destination, item_type)
 
-    # Step 2: alias resolution — resolve raw slug to canonical slug if known
     canonical_slug = await resolve_slug_alias(raw_slug)
     lookup_slug = canonical_slug if canonical_slug else raw_slug
 
-    # Step 3: cache check using resolved slug
     cached = await get_cached_attraction(lookup_slug)
     if cached is not None:
         logger.info("Cache hit: %s (lookup_slug=%s)", raw_slug, lookup_slug)
         if canonical_slug is None:
-            # raw_slug was already canonical — store self-alias so future lookups skip this miss
             await store_slug_alias(raw_slug, raw_slug)
         stable = await get_place_by_slug(lookup_slug, item_type)
         if stable:
-            return {**stable, **cached}
+            return {**stable, **cached, "place_id": stable.get("id")}
         return cached
 
     logger.info("Cache miss: %s — fetching live data", raw_slug)
 
-    # Step 4: Tavily web search
     search_context = await search_item(name, destination, item_type)
+    data = await enrich_with_llm(name, destination, item_type, search_context)
 
-    # Step 5: LLM enrichment (response now includes canonical_name, location, image_url)
-    data = await enrich_with_llm(name, destination, item_type, search_context, model_state=model_state)
-
-    # Step 6: build canonical slug from the name Gemini confirmed
     canonical_name = data.get("canonical_name") or name
     canonical_slug = build_cache_key(canonical_name, destination, item_type)
 
-    # Step 6b: canonical slug may already be cached (different raw input, same place)
     existing_cache = await get_cached_attraction(canonical_slug)
     if existing_cache is not None:
         await store_slug_alias(raw_slug, canonical_slug)
         stable = await get_place_by_slug(canonical_slug, item_type)
         if stable:
-            return {**stable, **existing_cache}
+            return {**stable, **existing_cache, "place_id": stable.get("id")}
         return existing_cache
 
-    # Step 7a: upsert stable fields into the permanent places table
+    country_code = resolve_country_code(destination)
+    destination_tokens = [t.strip().lower() for t in destination.split(",") if t.strip()]
+    location_query = data.get("location") or canonical_name
+    geo, wiki_image = await asyncio.gather(
+        geocode_with_validation(
+            f"{location_query}, {destination}",
+            country_code=country_code,
+            destination_tokens=destination_tokens,
+        ),
+        fetch_wikipedia_image(canonical_name, destination),
+    )
+    data["lat"] = geo.lat if geo else None
+    data["lng"] = geo.lng if geo else None
+    data["timezone"] = resolve_timezone(geo.lat, geo.lng) if geo else None
+    if wiki_image:
+        data["image_url"] = wiki_image
+
     stable_payload = {
         "slug": canonical_slug,
         "item_type": item_type,
@@ -275,18 +222,118 @@ async def get_place_data(name: str, destination: str, item_type: str, model_stat
         "description": data.get("description"),
         "location": data.get("location"),
         "image_url": data.get("image_url"),
+        "lat": data["lat"],
+        "lng": data["lng"],
+        "timezone": data["timezone"],
+        "categories": data.get("categories"),
     }
-    await upsert_place(stable_payload)
+    upserted = await upsert_place(stable_payload)
+    if upserted:
+        data["place_id"] = upserted.get("id")
 
-    # Step 7b: store fresh fields in ai_attraction_cache (24h TTL)
     fresh_data = {k: data[k] for k in FRESH_FIELDS[item_type] if k in data}
     try:
         await store_attraction_cache(canonical_slug, fresh_data)
     except Exception as exc:
         logger.warning("Cache write failed for key %s: %s", canonical_slug, exc)
 
-    # Step 8: record alias so next request with the same raw input skips Gemini
     await store_slug_alias(raw_slug, canonical_slug)
 
-    # Step 9: return full data (stable + fresh merged) to the client
     return data
+
+
+async def stream_place_data(name: str, destination: str, item_type: str):
+    """Yield enrichment field updates as the LLM streams.
+
+    Cache hit: emits all merged (stable + fresh) fields immediately.
+    Cache miss: runs Tavily, streams the LLM, emits each field when it first
+    appears or changes in the accumulating partial. Persists at stream end.
+    """
+    raw_slug = build_cache_key(name, destination, item_type)
+    canonical_slug = await resolve_slug_alias(raw_slug)
+    lookup_slug = canonical_slug if canonical_slug else raw_slug
+
+    cached = await get_cached_attraction(lookup_slug)
+    if cached is not None:
+        logger.info("Stream cache hit: %s (lookup_slug=%s)", raw_slug, lookup_slug)
+        if canonical_slug is None:
+            await store_slug_alias(raw_slug, raw_slug)
+        stable = await get_place_by_slug(lookup_slug, item_type)
+        if stable:
+            place_id = stable.pop("id", None)
+            if place_id is not None:
+                yield {"field": "place_id", "value": place_id}
+        merged = {**(stable or {}), **cached}
+        for field, value in merged.items():
+            yield {"field": field, "value": value}
+        return
+
+    logger.info("Stream cache miss: %s — streaming enrichment", raw_slug)
+    search_context = await search_item(name, destination, item_type)
+    prompt = build_prompt(name, destination, item_type, search_context)
+
+    seen: dict[str, object] = {}
+    final = None
+    async for partial in stream_structured(
+        "enrich", EnrichmentResponse, prompt, temperature=0.0, max_tokens=1024,
+    ):
+        final = partial
+        dumped = partial.model_dump(mode="json", exclude_none=True)
+        for field, value in dumped.items():
+            if seen.get(field) != value:
+                seen[field] = value
+                yield {"field": field, "value": value}
+
+    if final is None:
+        return
+
+    data = final.model_dump(mode="json", exclude_none=False)
+    canonical_name = data.get("canonical_name") or name
+    canonical_slug_final = build_cache_key(canonical_name, destination, item_type)
+
+    existing_cache = await get_cached_attraction(canonical_slug_final)
+    if existing_cache is None:
+        country_code = resolve_country_code(destination)
+        destination_tokens = [t.strip().lower() for t in destination.split(",") if t.strip()]
+        location_query = data.get("location") or canonical_name
+        geo, wiki_image = await asyncio.gather(
+            geocode_with_validation(
+                f"{location_query}, {destination}",
+                country_code=country_code,
+                destination_tokens=destination_tokens,
+            ),
+            fetch_wikipedia_image(canonical_name, destination),
+        )
+        lat = geo.lat if geo else None
+        lng = geo.lng if geo else None
+        tz = resolve_timezone(geo.lat, geo.lng) if geo else None
+        image_url = wiki_image or data.get("image_url")
+
+        upserted = await upsert_place({
+            "slug": canonical_slug_final,
+            "item_type": item_type,
+            "name": canonical_name,
+            "destination": destination,
+            "description": data.get("description"),
+            "location": data.get("location"),
+            "image_url": image_url,
+            "lat": lat,
+            "lng": lng,
+            "timezone": tz,
+            "categories": data.get("categories"),
+        })
+        if upserted and upserted.get("id"):
+            yield {"field": "place_id", "value": upserted["id"]}
+        for field, value in (("lat", lat), ("lng", lng), ("timezone", tz)):
+            if value is not None:
+                yield {"field": field, "value": value}
+        if wiki_image:
+            yield {"field": "image_url", "value": wiki_image}
+
+        fresh_data = {k: data[k] for k in FRESH_FIELDS[item_type] if k in data}
+        try:
+            await store_attraction_cache(canonical_slug_final, fresh_data)
+        except Exception as exc:
+            logger.warning("Cache write failed for key %s: %s", canonical_slug_final, exc)
+
+    await store_slug_alias(raw_slug, canonical_slug_final)

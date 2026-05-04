@@ -39,6 +39,10 @@ async def get_current_user(
             signing_key.key,
             algorithms=["ES256", "RS256", "HS256"],
             audience="authenticated",
+            # Tolerate small clock drift between the Supabase auth server and the
+            # local dev machine, which otherwise rejects freshly-issued tokens
+            # with ImmatureSignatureError (iat a second or two in the future).
+            leeway=10,
         )
         user_id: str | None = payload.get("sub")
         if not user_id:

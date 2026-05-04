@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 
-import { getDayTransportSuggestions, type AddItemPayload, type PlanItem, type TransportSuggestion } from "@/lib/api";
+import { streamDayTransportSuggestions, type AddItemPayload, type PlanItem, type SameDayMarker, type TransportSuggestion } from "@/lib/api";
 import { isAbortError } from "@/lib/utils";
 
 interface DayTransportState {
@@ -17,6 +17,7 @@ export interface UseDayTransportOptions {
 
 export interface UseDayTransportReturn {
   getDayState: (dayId: string) => DayTransportState;
+  hasFetched: (dayId: string) => boolean;
   fetchForDay: (dayId: string) => Promise<void>;
   addingKeys: Set<string>;
   addOption: (
@@ -40,11 +41,15 @@ export function useDayTransport({ planId }: UseDayTransportOptions): UseDayTrans
   const [dayStates, setDayStates] = useState<Map<string, DayTransportState>>(new Map());
   const [addingKeys, setAddingKeys] = useState<Set<string>>(new Set());
   const [transportPositions, setTransportPositions] = useState<Map<string, string>>(new Map());
-  const [dismissedPairKeys, setDismissedPairKeys] = useState<Set<string>>(new Set());
   const abortRefs = useRef<Map<string, AbortController>>(new Map());
 
   const getDayState = useCallback(
     (dayId: string): DayTransportState => dayStates.get(dayId) ?? EMPTY_STATE,
+    [dayStates],
+  );
+
+  const hasFetched = useCallback(
+    (dayId: string): boolean => dayStates.has(dayId),
     [dayStates],
   );
 
@@ -66,23 +71,28 @@ export function useDayTransport({ planId }: UseDayTransportOptions): UseDayTrans
       const controller = new AbortController();
       abortRefs.current.set(dayId, controller);
 
-      setDayStatePartial(dayId, { isLoading: true, error: null });
+      setDayStatePartial(dayId, { suggestions: new Map(), isLoading: true, error: null });
 
       try {
-        const data = await getDayTransportSuggestions(planId, dayId, controller.signal);
+        await streamDayTransportSuggestions(
+          planId,
+          dayId,
+          (pair) => {
+            if (controller.signal.aborted) return;
+            if (!pair.source_item_id) return;
+            setDayStates((prev) => {
+              const existing = prev.get(dayId) ?? EMPTY_STATE;
+              const nextSuggestions = new Map(existing.suggestions);
+              nextSuggestions.set(pair.source_item_id!, pair);
+              const out = new Map(prev);
+              out.set(dayId, { ...existing, suggestions: nextSuggestions });
+              return out;
+            });
+          },
+          controller.signal,
+        );
         if (controller.signal.aborted) return;
-
-        // Index by source_item_id, excluding pairs the user has already added this session.
-        const currentDismissed = dismissedPairKeys;
-        const indexed = new Map<string, TransportSuggestion>();
-        for (const s of data.suggestions) {
-          if (!s.source_item_id) continue;
-          const key = `${s.source_item_id}-${s.destination_item_id}`;
-          if (!currentDismissed.has(key)) {
-            indexed.set(s.source_item_id, s);
-          }
-        }
-        setDayStatePartial(dayId, { suggestions: indexed, isLoading: false });
+        setDayStatePartial(dayId, { isLoading: false });
       } catch (err) {
         if (!isAbortError(err)) {
           setDayStatePartial(dayId, {
@@ -92,7 +102,7 @@ export function useDayTransport({ planId }: UseDayTransportOptions): UseDayTrans
         }
       }
     },
-    [planId, setDayStatePartial, dismissedPairKeys],
+    [planId, setDayStatePartial],
   );
 
   const dismissSuggestion = useCallback(
@@ -130,6 +140,13 @@ export function useDayTransport({ planId }: UseDayTransportOptions): UseDayTrans
           option.one_line,
         ].filter(Boolean);
 
+        // Store a same_day_pair marker in ai_data so the backend can detect
+        // this transition as covered on subsequent fetches.
+        const pairKey =
+          suggestion.source_item_id && suggestion.destination_item_id
+            ? `${suggestion.source_item_id}->${suggestion.destination_item_id}`
+            : `${suggestion.source_city}->${suggestion.destination_city}`;
+
         const payload: AddItemPayload = {
           item_type: "transport",
           title: option.name,
@@ -137,6 +154,7 @@ export function useDayTransport({ planId }: UseDayTransportOptions): UseDayTrans
           location: suggestion.destination_item_location ?? undefined,
           destination_id: extra?.destinationId,
           sort_order: extra?.sortOrder,
+          ai_data: { same_day_pair: pairKey } satisfies SameDayMarker,
         };
         const newItem = await onAddItem(dayId, payload);
         // Track position in-session so DayView renders it after its source item immediately.
@@ -145,8 +163,6 @@ export function useDayTransport({ planId }: UseDayTransportOptions): UseDayTrans
           next.set(newItem.id, suggestion.source_item_id!);
           return next;
         });
-        // Permanently dismiss this pair — don't re-show it even if the backend cache returns it.
-        setDismissedPairKeys((prev) => new Set(prev).add(key));
         dismissSuggestion(dayId, suggestion.source_item_id);
       } finally {
         setAddingKeys((prev) => {
@@ -159,5 +175,5 @@ export function useDayTransport({ planId }: UseDayTransportOptions): UseDayTrans
     [dismissSuggestion],
   );
 
-  return { getDayState, fetchForDay, addingKeys, addOption, dismissSuggestion, transportPositions };
+  return { getDayState, hasFetched, fetchForDay, addingKeys, addOption, dismissSuggestion, transportPositions };
 }

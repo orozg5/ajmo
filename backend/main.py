@@ -15,16 +15,20 @@ from app.routes.ai import router as ai_router
 from app.routes.places import router as places_router
 from app.routes.plan_days import router as plan_days_router
 from app.routes.plan_destinations import router as plan_destinations_router
+from app.routes.plan_hotels import router as plan_hotels_router
 from app.routes.plan_items import router as plan_items_router
 from app.routes.plans import router as plans_router
+from app.routes.storage import router as storage_router
 from app.routes.users import router as users_router
 from app.services.places.cleanup import start_cache_cleanup
+from app.services.places.geocoding import close_geocoder_client
 
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     await start_cache_cleanup()
     yield
+    await close_geocoder_client()
 
 
 app = FastAPI(
@@ -48,7 +52,9 @@ app.include_router(places_router)
 app.include_router(plans_router)
 app.include_router(plan_days_router)
 app.include_router(plan_destinations_router)
+app.include_router(plan_hotels_router)
 app.include_router(plan_items_router)
+app.include_router(storage_router)
 app.include_router(users_router)
 
 

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Fraunces, Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-import Providers from "./providers";
+import AppShell from "@/components/layout/AppShell";
 import { createClient } from "@/lib/supabase/server";
-import LogoutButton from "@/features/auth/components/LogoutButton";
+
+import Providers from "./providers";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,9 +17,16 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const fraunces = Fraunces({
+  variable: "--font-fraunces",
+  subsets: ["latin"],
+  axes: ["opsz"],
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "Ajmo",
-  description: "Web application for collaborative travel planning",
+  title: "Ajmo — plan trips together",
+  description: "Collaborative, AI-assisted travel planning.",
 };
 
 export default async function RootLayout({
@@ -31,17 +39,23 @@ export default async function RootLayout({
     data: { user },
   } = await supabase.auth.getUser();
 
+  const displayName = (user?.user_metadata?.display_name as string | undefined) ?? null;
+  const avatarUrl = (user?.user_metadata?.avatar_url as string | undefined) ?? null;
+
   return (
-    <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+    <html lang="en" suppressHydrationWarning>
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} antialiased`}
+      >
         <Providers>
-          {user && (
-            <header className="border-b px-6 py-3 flex items-center justify-between">
-              <span className="text-sm font-medium">Ajmo</span>
-              <LogoutButton />
-            </header>
-          )}
-          {children}
+          <AppShell
+            authenticated={Boolean(user)}
+            userEmail={user?.email ?? null}
+            userDisplayName={displayName}
+            userAvatarUrl={avatarUrl}
+          >
+            {children}
+          </AppShell>
         </Providers>
       </body>
     </html>

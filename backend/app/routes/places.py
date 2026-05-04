@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.constants import VALID_ITEM_TYPES
 from app.schemas.places import PlaceSuggestionResponse
@@ -12,7 +12,11 @@ router = APIRouter(prefix="/places", tags=["places"])
 
 
 @router.get("/autocomplete")
-async def autocomplete_places_route(q: str, destination: str, item_type: str) -> list[PlaceSuggestionResponse]:
+async def autocomplete_places_route(
+    q: str = Query(..., max_length=200),
+    destination: str = Query(..., max_length=120),
+    item_type: str = Query(...),
+) -> list[PlaceSuggestionResponse]:
     """
     Return up to 10 place suggestions whose name prefix-matches q.
     Scoped to destination and item_type.

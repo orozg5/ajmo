@@ -51,7 +51,11 @@ async def initialize_days(plan_id: str, date_from: date | str | None, date_to: d
 
 
 async def list_days_with_items(plan_id: str) -> list[dict]:
-    """Return all days for a plan, each with their items embedded, ordered by day_number."""
+    """Return all days for a plan, each with their items embedded, ordered by day_number.
+
+    Items are sorted by sort_key primarily (fractional index, authoritative) with
+    sort_order as a tiebreaker for any pre-backfill rows missing a sort_key.
+    """
     supabase = get_supabase_client()
     result = (
         supabase.table("plan_days")
@@ -62,8 +66,32 @@ async def list_days_with_items(plan_id: str) -> list[dict]:
     )
     days = result.data or []
     for day in days:
-        day["items"] = sorted(day.pop("plan_items") or [], key=lambda i: i.get("sort_order") or 0)
+        raw_items = day.pop("plan_items") or []
+        day["items"] = sorted(
+            raw_items,
+            key=lambda i: (
+                i.get("sort_key") is None,
+                i.get("sort_key") or "",
+                i.get("sort_order") or 0,
+            ),
+        )
     return days
+
+
+async def update_day(day_id: str, payload: dict) -> dict | None:
+    """Update title/notes on a day. Returns the fresh row, or None if missing."""
+    if not payload:
+        return None
+    supabase = get_supabase_client()
+    result = (
+        supabase.table("plan_days")
+        .update(payload)
+        .eq("id", day_id)
+        .execute()
+    )
+    if not result.data:
+        return None
+    return result.data[0]
 
 
 async def create_day(plan_id: str, day_number: int, date_value: str | None = None) -> dict:

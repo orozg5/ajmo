@@ -10,12 +10,36 @@ export interface UserPreferences {
 
 export type UserPreferencesUpdate = Omit<UserPreferences, "user_id">;
 
+export interface Profile {
+  id: string;
+  username: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  bio: string | null;
+}
+
+export interface ProfileUpdate {
+  display_name?: string | null;
+  avatar_url?: string | null;
+  bio?: string | null;
+}
+
 export const getPreferences = (): Promise<UserPreferences> =>
   apiFetch<UserPreferences>("/users/me/preferences");
 
 export const upsertPreferences = (data: UserPreferencesUpdate): Promise<UserPreferences> =>
   apiFetch<UserPreferences>("/users/me/preferences", {
     method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+
+export const getMe = (accessToken?: string | null): Promise<Profile> =>
+  apiFetch<Profile>("/users/me", undefined, accessToken);
+
+export const updateMe = (data: ProfileUpdate): Promise<Profile> =>
+  apiFetch<Profile>("/users/me", {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });

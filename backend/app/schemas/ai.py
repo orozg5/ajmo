@@ -10,8 +10,8 @@ from app.constants import validate_item_type
 
 
 class EnrichRequest(BaseModel):
-    name: str = Field(..., min_length=1, description="Name of the item")
-    destination: str = Field(..., min_length=1, description="City or country")
+    name: str = Field(..., min_length=1, max_length=200, description="Name of the item")
+    destination: str = Field(..., min_length=1, max_length=120, description="City or country")
     item_type: str = Field(..., description="One of: attraction, restaurant, hotel, transport, activity")
 
     @field_validator("item_type")
@@ -76,10 +76,15 @@ class TransportSuggestionsResponse(BaseModel):
 
 class EnrichedItemResponse(BaseModel):
     # Stable fields (always present after enrichment)
+    place_id: str | None = None
     canonical_name: str | None = None
     description: str | None = None
     location: str | None = None
     image_url: str | None = None
+    lat: float | None = None
+    lng: float | None = None
+    timezone: str | None = None
+    categories: list[str] | None = None
 
     # Per-type fresh fields — all optional so one model covers all five types
     opening_hours: str | None = None

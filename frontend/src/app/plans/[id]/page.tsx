@@ -1,11 +1,19 @@
 import { getPlan, initializeDays, getDestinations } from "@/lib/api";
 import { createClient } from "@/lib/supabase/server";
-import ItineraryPlanner from "@/features/plans/components/ItineraryPlanner";
+import ItineraryPlanner from "@/features/plans/components/itinerary/ItineraryPlanner";
+import PlanHeader from "@/features/plans/components/itinerary/PlanHeader";
 
 export default async function PlanPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = await createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const [
+    {
+      data: { session },
+    },
+    {
+      data: { user },
+    },
+  ] = await Promise.all([supabase.auth.getSession(), supabase.auth.getUser()]);
   const token = session?.access_token ?? null;
 
   const [plan, days, destinations] = await Promise.all([
@@ -14,19 +22,12 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
     getDestinations(id, token),
   ]);
 
+  const isOwner = user?.id === plan.owner_id;
+
   return (
-    <main className="p-8 space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">{plan.title}</h1>
-        {plan.destination && <p className="text-muted-foreground">{plan.destination}</p>}
-        {plan.date_from && (
-          <p className="text-sm text-muted-foreground">
-            {plan.date_from}{plan.date_to ? ` → ${plan.date_to}` : ""}
-          </p>
-        )}
-        {plan.description && <p className="text-sm mt-1">{plan.description}</p>}
-      </div>
+    <div className="space-y-6 py-4 md:py-6">
+      <PlanHeader plan={plan} destinations={destinations} isOwner={isOwner} />
       <ItineraryPlanner plan={plan} initialDays={days} destinations={destinations} />
-    </main>
+    </div>
   );
 }

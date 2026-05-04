@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 
-import { getCrossCityTransportSuggestions, type AddItemPayload, type CrossCityMarker, type TransportSuggestion } from "@/lib/api";
+import { streamCrossCityTransportSuggestions, type AddItemPayload, type CrossCityMarker, type TransportSuggestion } from "@/lib/api";
 import { isAbortError } from "@/lib/utils";
 
 export interface UseCrossCityTransportOptions {
@@ -44,10 +44,17 @@ export function useCrossCityTransport({ planId }: UseCrossCityTransportOptions):
 
     setIsLoading(true);
     setError(null);
+    setSuggestions([]);
     try {
-      const data = await getCrossCityTransportSuggestions(planId, controller.signal);
+      await streamCrossCityTransportSuggestions(
+        planId,
+        (pair) => {
+          if (controller.signal.aborted) return;
+          setSuggestions((prev) => [...prev, pair]);
+        },
+        controller.signal,
+      );
       if (!controller.signal.aborted) {
-        setSuggestions(data.suggestions);
         setHasFetched(true);
       }
     } catch (err) {

@@ -14,14 +14,14 @@ export default async function PreferencesPage() {
   }
 
   return (
-    <main className="p-8 max-w-lg space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Travel Preferences</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          These preferences help the AI suggest places you&apos;ll actually enjoy.
+    <div className="mx-auto w-full max-w-2xl space-y-6 p-6 md:p-10">
+      <div className="space-y-1.5">
+        <h1 className="text-display-xl">Travel preferences</h1>
+        <p className="text-sm text-ink-subtle">
+          These tune what the AI suggests. Fewer generic museum stops, more things you actually like.
         </p>
       </div>
       <PreferencesForm />
-    </main>
+    </div>
   );
 }

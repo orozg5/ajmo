@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { createSseClient } from "@/lib/api/generated/core/serverSentEvents.gen";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
@@ -28,4 +29,39 @@ export async function apiFetch<T>(
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
+}
+
+export async function apiSse<T>(
+  path: string,
+  onEvent: (name: string, data: T) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const token = await getBrowserToken();
+  const headers: Record<string, string> = { Accept: "text/event-stream" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let errorMessage: string | null = null;
+
+  const { stream } = createSseClient<T>({
+    url: `${API_URL}${path}`,
+    method: "GET",
+    headers,
+    signal,
+    sseMaxRetryAttempts: 1,
+    onSseEvent: (ev) => {
+      if (!ev.event) return;
+      if (ev.event === "error") {
+        const data = ev.data as { message?: string } | undefined;
+        errorMessage = data?.message ?? "Stream failed";
+        return;
+      }
+      onEvent(ev.event, ev.data as T);
+    },
+  });
+
+  for await (const _chunk of stream) {
+    // sink — events are delivered via onSseEvent above
+  }
+
+  if (errorMessage) throw new Error(errorMessage);
 }

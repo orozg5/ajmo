@@ -4,13 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
 from app.auth import get_current_user
-from app.schemas.itinerary import PlanDayCreate, PlanDayWithItemsResponse
+from app.schemas.itinerary import PlanDayCreate, PlanDayUpdate, PlanDayWithItemsResponse
 from app.services.plans.crud import get_plan
 from app.services.plans.days import (
     create_day,
     delete_day,
     initialize_days,
     list_days_with_items,
+    update_day,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,29 @@ async def create_day_route(
     except Exception:
         logger.exception("Unexpected error creating day for plan %s", plan_id)
         raise HTTPException(status_code=500, detail="Failed to create day")
+
+
+@router.patch("/{plan_id}/days/{day_id}")
+async def update_day_route(
+    plan_id: str,
+    day_id: str,
+    body: PlanDayUpdate,
+    current_user: str = Depends(get_current_user),
+) -> dict:
+    """Update a day's title or notes."""
+    try:
+        patch = body.model_dump(exclude_unset=True)
+        updated = await update_day(day_id, patch)
+        if updated is None:
+            raise HTTPException(status_code=404, detail=f"Day {day_id!r} not found")
+        return updated
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception:
+        logger.exception("Unexpected error updating day %s", day_id)
+        raise HTTPException(status_code=500, detail="Failed to update day")
 
 
 @router.delete("/{plan_id}/days/{day_id}", status_code=204)

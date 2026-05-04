@@ -1,6 +1,7 @@
-import { apiFetch } from "./client";
+import { apiFetch, apiSse } from "./client";
 
 export interface EnrichedItem {
+  place_id: string | null;
   description: string | null;
   opening_hours: string | null;
   price_range: string | null;
@@ -13,10 +14,19 @@ export interface EnrichedItem {
   schedule: string | null;
   duration: string | null;
   location: string | null;
+  image_url: string | null;
+  lat: number | null;
+  lng: number | null;
+  timezone: string | null;
+  categories: string[] | null;
 }
 
 export interface CrossCityMarker {
   cross_city_pair: string;
+}
+
+export interface SameDayMarker {
+  same_day_pair: string;
 }
 
 export interface PlaceSuggestion {
@@ -27,6 +37,8 @@ export interface PlaceSuggestion {
   description: string | null;
   location: string | null;
   image_url: string | null;
+  lat: number | null;
+  lng: number | null;
 }
 
 export interface AiSuggestion {
@@ -146,13 +158,34 @@ export const getDayTransportSuggestions = (
     signal,
   });
 
-export const getCrossCityTransportSuggestions = (
+export const streamDayTransportSuggestions = (
   planId: string,
+  dayId: string,
+  onPair: (pair: TransportSuggestion) => void,
   signal?: AbortSignal,
-): Promise<TransportSuggestionsResult> =>
-  apiFetch<TransportSuggestionsResult>("/ai/transport-suggestions/cross-city", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ plan_id: planId }),
+): Promise<void> => {
+  const params = new URLSearchParams({ plan_id: planId, day_id: dayId });
+  return apiSse<TransportSuggestion>(
+    `/ai/transport-suggestions/stream?${params.toString()}`,
+    (name, data) => {
+      if (name === "pair") onPair(data);
+    },
     signal,
-  });
+  );
+};
+
+export const streamCrossCityTransportSuggestions = (
+  planId: string,
+  onPair: (pair: TransportSuggestion) => void,
+  signal?: AbortSignal,
+): Promise<void> => {
+  const params = new URLSearchParams({ plan_id: planId });
+  return apiSse<TransportSuggestion>(
+    `/ai/transport-suggestions/stream?${params.toString()}`,
+    (name, data) => {
+      if (name === "pair") onPair(data);
+    },
+    signal,
+  );
+};
+

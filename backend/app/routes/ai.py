@@ -1,10 +1,12 @@
 import asyncio
+import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response, StreamingResponse
 
 from app.auth import get_current_user
+from app.constants import validate_item_type
 from app.schemas.ai import (
     AiSuggestionItemResponse,
     AiSuggestionsResponse,
@@ -18,11 +20,26 @@ from app.schemas.ai import (
     TransportSuggestionItem,
     TransportSuggestionsResponse,
 )
-from app.services.ai.enrichment import get_place_data
-from app.services.ai.suggestions import get_next_suggestion, get_suggestions
-from app.services.ai.transport import get_cross_city_suggestions, get_same_day_suggestions
+from app.services.ai.enrichment import get_place_data, stream_place_data
+from app.services.ai.suggestions import (
+    get_next_suggestion,
+    get_suggestions,
+    stream_suggestions,
+)
+from app.services.ai.transport import (
+    get_cross_city_suggestions,
+    get_same_day_suggestions,
+    stream_cross_city_suggestions,
+    stream_same_day_suggestions,
+)
 from app.services.plans.days import list_days_with_items
 from app.services.users.preferences import get_preferences
+
+
+def sse_event(event: str, data: object) -> str:
+    """Format a single Server-Sent Event frame."""
+    payload = data if isinstance(data, str) else json.dumps(data, default=str)
+    return f"event: {event}\ndata: {payload}\n\n"
 
 logger = logging.getLogger(__name__)
 
@@ -237,3 +254,121 @@ async def get_cross_city_transport_route(
         raise HTTPException(status_code=500, detail="Failed to generate transport suggestions")
 
     return TransportSuggestionsResponse(suggestions=suggestions)
+
+
+# ── SSE streaming variants ────────────────────────────────────────────────────
+
+
+@router.get("/enrich/stream")
+async def enrich_stream_route(
+    request: Request,
+    name: str = Query(..., min_length=1, max_length=200),
+    destination: str = Query(..., min_length=1, max_length=120),
+    item_type: str = Query(...),
+) -> StreamingResponse:
+    """Stream AI enrichment field-by-field as the LLM generates them.
+
+    Frames: `event: field\\ndata: {"field": "...", "value": ...}\\n\\n`.
+    Terminates with `event: done` or `event: error`.
+    """
+    try:
+        validated_type = validate_item_type(item_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    async def event_stream():
+        try:
+            async for update in stream_place_data(name, destination, validated_type):
+                if await request.is_disconnected():
+                    return
+                yield sse_event("field", update)
+            yield sse_event("done", {})
+        except Exception:
+            logger.exception("enrich_stream_route failed for %s", name)
+            yield sse_event("error", {"message": "Enrichment stream failed"})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.get("/suggestions/stream")
+async def suggestions_stream_route(
+    request: Request,
+    plan_id: str = Query(..., description="UUID of the plan"),
+    current_user: str = Depends(get_current_user),
+) -> StreamingResponse:
+    """Stream AI suggestions one-by-one.
+
+    Reads plans.suggestions first and emits cached suggestions immediately; on a
+    miss, streams new ones from the LLM, enriches each, and persists the full
+    list at the end.
+
+    Frames: `event: suggestion\\ndata: <SuggestionItem JSON>\\n\\n`.
+    Terminates with `event: done` or `event: error`.
+    """
+    async def event_stream():
+        try:
+            days = await list_days_with_items(plan_id)
+            existing_names = [
+                item["title"] for day in days for item in day.get("items", [])
+            ]
+
+            try:
+                preferences = await get_preferences(current_user)
+            except Exception:
+                logger.warning(
+                    "Could not load preferences for user %s — proceeding without",
+                    current_user,
+                )
+                preferences = None
+
+            async for suggestion in stream_suggestions(plan_id, existing_names, preferences):
+                if await request.is_disconnected():
+                    return
+                yield sse_event("suggestion", suggestion)
+            yield sse_event("done", {})
+        except Exception:
+            logger.exception("suggestions_stream_route failed for plan %s", plan_id)
+            yield sse_event("error", {"message": "Suggestions stream failed"})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.get("/transport-suggestions/stream")
+async def transport_stream_route(
+    request: Request,
+    plan_id: str = Query(..., description="UUID of the plan"),
+    day_id: str | None = Query(
+        None,
+        description="UUID of a day for same-day scope; omit for cross-city scope.",
+    ),
+    current_user: str = Depends(get_current_user),
+) -> StreamingResponse:
+    """Stream transport suggestions pair-by-pair.
+
+    Scope: if `day_id` is provided, generates same-day (intra-day adjacent items);
+    otherwise cross-city (last item of city A → first item of city B across the
+    plan). Cached pairs emit first, then new ones stream from the LLM and persist.
+
+    Frames: `event: pair\\ndata: <TransportSuggestionItem JSON>\\n\\n`.
+    Terminates with `event: done` or `event: error`.
+    """
+    async def event_stream():
+        try:
+            source = (
+                stream_same_day_suggestions(plan_id, day_id)
+                if day_id is not None
+                else stream_cross_city_suggestions(plan_id)
+            )
+            async for pair in source:
+                if await request.is_disconnected():
+                    return
+                yield sse_event("pair", pair)
+            yield sse_event("done", {})
+        except Exception:
+            logger.exception(
+                "transport_stream_route failed for plan %s (day_id=%s)",
+                plan_id, day_id,
+            )
+            yield sse_event("error", {"message": "Transport stream failed"})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

@@ -1,0 +1,28 @@
+{
+  "name": "ajmo-collab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hocuspocus/server": "^3.1.2",
+    "@hocuspocus/extension-database": "^3.1.2",
+    "@hocuspocus/extension-logger": "^3.1.2",
+    "pg": "^8.13.1",
+    "undici": "^6.21.0",
+    "ws": "^8.18.0",
+    "yjs": "^13.6.30"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

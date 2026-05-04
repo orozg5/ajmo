@@ -4,8 +4,18 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
 from app.auth import get_current_user
-from app.schemas.itinerary import PlanItemCreate, PlanItemNotesUpdate, PlanItemResponse
-from app.services.plans.items import create_item, delete_item, update_item_notes
+from app.schemas.itinerary import (
+    PlanItemCreate,
+    PlanItemNotesUpdate,
+    PlanItemResponse,
+    PlanItemsReorderRequest,
+)
+from app.services.plans.items import (
+    create_item,
+    delete_item,
+    reorder_items,
+    update_item_notes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,3 +71,20 @@ async def delete_item_route(
     except Exception:
         logger.exception("Unexpected error deleting item %s", item_id)
         raise HTTPException(status_code=500, detail="Failed to delete item")
+
+
+@router.patch("/{plan_id}/reorder")
+async def update_items_order_route(
+    plan_id: str,
+    body: PlanItemsReorderRequest,
+    current_user: str = Depends(get_current_user),
+) -> list[PlanItemResponse]:
+    """Apply a batch of (id, sort_key, day_id, destination_id) updates at once."""
+    try:
+        entries = [entry.model_dump() for entry in body.items]
+        return await reorder_items(plan_id, entries)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception:
+        logger.exception("Unexpected error reordering items for plan %s", plan_id)
+        raise HTTPException(status_code=500, detail="Failed to reorder items")

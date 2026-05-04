@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { enrichBatch, autocompletePlaces, type EnrichedItem, type PlaceSuggestion } from "@/lib/api";
 import { isAbortError } from "@/lib/utils";
+
+const MAX_NAME_LENGTH = 200;
 
 interface UseItemEnrichmentOptions {
   destination: string;
@@ -71,6 +73,11 @@ export function useItemEnrichment({
       setShowDropdown(false);
       return;
     }
+    if (name.trim().length > MAX_NAME_LENGTH) {
+      setSuggestions([]);
+      setShowDropdown(false);
+      return;
+    }
     if (justSelectedRef.current) {
       justSelectedRef.current = false;
       return;
@@ -102,6 +109,11 @@ export function useItemEnrichment({
       setFetchError(null);
       return;
     }
+    if (name.trim().length > MAX_NAME_LENGTH) {
+      setResult(null);
+      setFetchError(null);
+      return;
+    }
     if (showDropdown) return; // wait for user to select from dropdown
 
     enrichAbortRef.current?.abort();
@@ -120,18 +132,21 @@ export function useItemEnrichment({
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
-  function handleSelect(s: PlaceSuggestion) {
+  const handleSelect = useCallback((s: PlaceSuggestion) => {
     justSelectedRef.current = true; // skip autocomplete re-query
     skipDebounceRef.current = true; // fire enrichment immediately
     setName(s.name);
     setSuggestions([]);
     setShowDropdown(false);
     setActiveIndex(-1);
-  }
+  }, []);
 
-  const handleNameChange = (value: string) => setName(value);
-  const handleDropdownVisibility = (show: boolean) => setShowDropdown(show);
-  const handleActiveIndexChange = (updater: number | ((prev: number) => number)) => setActiveIndex(updater);
+  const handleNameChange = useCallback((value: string) => setName(value), []);
+  const handleDropdownVisibility = useCallback((show: boolean) => setShowDropdown(show), []);
+  const handleActiveIndexChange = useCallback(
+    (updater: number | ((prev: number) => number)) => setActiveIndex(updater),
+    [],
+  );
 
   return {
     name,

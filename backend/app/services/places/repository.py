@@ -57,7 +57,7 @@ async def get_place_by_slug(slug: str, item_type: str) -> dict | None:
     try:
         result = (
             supabase.table("places")
-            .select("name, description, location, image_url")
+            .select("id, name, description, location, image_url, lat, lng, timezone, categories")
             .eq("slug", slug)
             .eq("item_type", item_type)
             .limit(1)

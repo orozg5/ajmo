@@ -1,6 +1,7 @@
 import logging
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from app.auth import get_current_user
@@ -53,12 +54,20 @@ async def get_plan_route(
 @router.get("")
 async def list_plans_route(
     current_user: str = Depends(get_current_user),
+    scope: Literal["owner", "member", "public"] = Query("owner"),
 ) -> list[PlanResponse]:
-    """List all plans belonging to the authenticated user."""
+    """List plans for the authenticated user in the requested scope.
+
+    scope=owner returns plans the user owns (default).
+    scope=public returns plans with visibility='public' the user does not own (Discover).
+    scope=member returns plans the user joined (empty until Phase 5 writes membership).
+    """
     try:
-        return await list_user_plans(current_user)
+        return await list_user_plans(current_user, scope=scope)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except Exception:
-        logger.exception("Unexpected error listing plans for owner %s", current_user)
+        logger.exception("Unexpected error listing plans for user %s scope=%s", current_user, scope)
         raise HTTPException(status_code=500, detail="Failed to list plans")
 
 
