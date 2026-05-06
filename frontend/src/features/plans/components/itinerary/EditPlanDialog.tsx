@@ -7,6 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import type * as Y from "yjs";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -21,11 +22,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   type DestinationResponse,
   type Plan,
+  type PlanRole,
   createDestination,
   deleteDestination,
   updateDestination,
   updatePlan,
 } from "@/lib/api";
+import { setPlanMeta } from "@/lib/yjs/mutations";
+import { type PlanMetaField, type PlanMetaPatch, PLAN_META_FIELDS } from "@/lib/yjs/schema";
 import EditPlanDangerTab from "@/features/plans/components/itinerary/EditPlanDangerTab";
 import EditPlanDestinationsTab, {
   buildDiff,
@@ -48,14 +52,31 @@ type EditPlanDialogProps = {
   onOpenChange: (open: boolean) => void;
   plan: Plan;
   destinations: DestinationResponse[];
+  role: PlanRole;
+  doc: Y.Doc | null;
 };
+
+function patchToPlanMeta(patch: object): PlanMetaPatch {
+  const source = patch as Record<string, unknown>;
+  const out: PlanMetaPatch = {};
+  for (const field of PLAN_META_FIELDS) {
+    if (field in source) {
+      const value = source[field];
+      out[field as PlanMetaField] = typeof value === "string" ? value : null;
+    }
+  }
+  return out;
+}
 
 export default function EditPlanDialog({
   open,
   onOpenChange,
   plan,
   destinations,
+  role,
+  doc,
 }: EditPlanDialogProps) {
+  const isOwner = role === "owner";
   const router = useRouter();
   const queryClient = useQueryClient();
 
@@ -125,6 +146,10 @@ export default function EditPlanDialog({
       const generalChanged = Object.keys(patch).length > 0;
       if (generalChanged) {
         await updatePlan(plan.id, patch);
+        // Broadcast plan-meta to peers so other connected clients update
+        // without a refresh. REST already persisted the canonical row; this
+        // Y.Map is a broadcast mirror only (the materializer never reads it).
+        if (doc) setPlanMeta(doc, patchToPlanMeta(patch));
       }
 
       const diff = buildDiff(destinations, rows);
@@ -203,7 +228,7 @@ export default function EditPlanDialog({
           <TabsList>
             <TabsTrigger value="general">General</TabsTrigger>
             <TabsTrigger value="destinations">Destinations</TabsTrigger>
-            <TabsTrigger value="danger">Danger zone</TabsTrigger>
+            {isOwner ? <TabsTrigger value="danger">Danger zone</TabsTrigger> : null}
           </TabsList>
 
           <TabsContent value="general" className="pt-4">
@@ -229,9 +254,11 @@ export default function EditPlanDialog({
             />
           </TabsContent>
 
-          <TabsContent value="danger" className="pt-4">
-            <EditPlanDangerTab planId={plan.id} planTitle={plan.title} />
-          </TabsContent>
+          {isOwner ? (
+            <TabsContent value="danger" className="pt-4">
+              <EditPlanDangerTab planId={plan.id} planTitle={plan.title} />
+            </TabsContent>
+          ) : null}
         </Tabs>
 
         {showSaveButton && (

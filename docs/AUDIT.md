@@ -33,9 +33,9 @@ Targeted at `backend/app/services/ai/transport.py` + the two frontend hooks.
 ## Schema + storage gaps
 
 - No `lat/lng/timezone/categories` on `places` → maps impossible. → fixed in Phase 4 (columns already existed in `supabase/schema.sql:194-209`; enrichment now writes them via Photon/Nominatim geocoding + `timezonefinder`; `get_place_by_slug` selects them so cache hits carry coords into `EnrichedItem`).
-- `plan_items.sort_order int` → needs to become `sort_key text` (fractional index) for conflict-free collaborative reorders.
-- No `plan_hotels` table → hotels can't span nights.
-- No `plan_days.notes`, `plan_comments`, `plan_item_reactions`, `plan_item_ratings`, `plan_activity`, `plan_invites`.
+- `plan_items.sort_order int` → needs to become `sort_key text` (fractional index) for conflict-free collaborative reorders. → fixed in Phase 3 (`sort_key text` cutover + backfill + write-path migration). Phase 6 Yjs schema + materializer also assume `sort_key`.
+- No `plan_hotels` table → hotels can't span nights. → fixed in Phase 3 (`plan_hotels` shipped with check-in/out day numbers).
+- No `plan_days.notes`, `plan_comments`, `plan_item_reactions`, `plan_item_ratings`, `plan_activity`, `plan_invites`. → partially fixed: `plan_days.notes` (Phase 3, now live-synced via Y.Doc), `plan_invites` + `plan_members.role` + BYTEA `plans.yjs_state` (Phases 5/6, 2026-05-06). `plan_comments`, `plan_item_reactions`, `plan_item_ratings`, `plan_activity` are columns in `supabase/schema.sql` but no routes/services/UI back them — comments/reactions/ratings/activity were deferred from Phase 5.
 - `plans.is_public bool` → should be `visibility` enum (`private | link | friends | public`). → fixed in Phase 2 (schema + `PlanResponse.visibility` + frontend `PlanVisibility` + dashboard scope filter all aligned; `is_public` removed from API).
 - Missing indexes on hot paths (`plan_items.plan_id/day_id/destination_id`, `plan_days.plan_id`, `plan_members.user_id`, `friendships.requester_id/addressee_id`).
 - RLS enabled on most tables but zero policies — tolerable because backend uses `service_role`, but blocks direct-from-client reads (Realtime) and masks bugs.
@@ -43,11 +43,15 @@ Targeted at `backend/app/services/ai/transport.py` + the two frontend hooks.
 ## Frontend architecture drift
 
 - Hand-typed API interfaces in `frontend/src/lib/api/*` mirror FastAPI models by hand → drift. → originally planned to fix with `@hey-api/openapi-ts` (Phase 0 / ADR 2026-04-19) but the generated client was never adopted in practice and was deleted 2026-05-05 (see ADR 2026-05-05 reversal). Drift remains a manual concern; revisit if it bites.
-- `usePlanItinerary` uses raw `useState` + ad-hoc optimistic updates, not React Query. Yjs cutover (Phase 6) is easier if React Query is consolidated first.
+- `usePlanItinerary` uses raw `useState` + ad-hoc optimistic updates, not React Query. Yjs cutover (Phase 6) is easier if React Query is consolidated first. → resolved differently in Phase 6 (2026-05-06): the Yjs cutover skipped React Query and put items + day/item notes directly in the Y.Doc. `usePlanItinerary` now subscribes via `useYAllItems` / `useYAllDayNotes` and writes through `lib/yjs/mutations.ts`; `useDayNotes` / `useItemNotes` follow the same pattern. The hook still keeps a thin `useState` mirror to feed the existing UI shape, but the source of truth is the Y.Doc.
 - `zod` transitive via `@hookform/resolvers`. Add as direct dep.
 - Stock shadcn gray palette, no brand, no display font, no motion, no empty states, no toasts, no error boundaries. Home is `<div>Home</div>`. → fixed in Phase 2 (OKLCH tokens + Fraunces display font applied; `PageTransition` + framer hover lifts; `EmptyPlansState` with `CompassMark` SVG; Sonner toasts; `Home` replaced with `DashboardSections` — three scopes, skeletons, empty states).
 - No Zustand stores yet; needed for UI state (presence, offline pill, map camera).
 - No Supabase Storage wiring. `plans.cover_image_url` exists but nothing writes it. → fixed in Phase 2 (buckets + RLS in schema; `POST /storage/{plan-covers,user-avatars}/signed`; `useSignedUpload` hook; wizard Step 3 + `AvatarUploader` consume it; `cover_image_path`/`_url` persisted via `createPlan`).
+
+## Operational regressions
+
+- **Backend test suite deleted 2026-05-06.** `backend/tests/` (`conftest.py`, `test_flight_estimator.py`, `test_plans_update.py`, `test_transport_pairs.py`) and `backend/pytest.ini` were removed in the Phase 5/6 batch. The Phase 1 smoke tests cited in `docs/phases/phase-1.md` no longer exist on disk; the Phase 9 `test-backend` CI job now starts from zero coverage. Flag: every backend change since 2026-05-06 has shipped without unit-test verification — Phase 9 needs to rebuild this from scratch (materializer + invite + role-resolution paths are the highest-value targets).
 
 ## What's good (don't touch)
 

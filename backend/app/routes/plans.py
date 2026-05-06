@@ -78,7 +78,7 @@ async def update_plan_route(
     body: PlanUpdate,
     current_user: str = Depends(get_current_user),
 ) -> PlanResponse:
-    """Partially update a plan. Owner-only — non-owners receive 404. yjs_state is never touched here."""
+    """Partially update a plan. Owner or editor only — others receive 404. yjs_state is never touched here."""
     try:
         payload = body.model_dump(mode="json", exclude_unset=True)
         return await update_plan(plan_id, current_user, payload)

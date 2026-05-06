@@ -2,6 +2,20 @@
 
 One entry per non-obvious decision. Date in ISO format. Update when reversed.
 
+## 2026-05-06 — Yjs schema scoped to items + day notes
+
+**Context.** Phase-6 brought up the question of how much of the plan to model in the Y.Doc. The original phase plan listed destinations, days, items, hotels, and destination_days — five tables to keep mirrored. That ballooned the materializer's reconciliation surface and tied owner-only operations (date-range changes via `EditPlanDialog`, destination CRUD, hotel-with-place-join queries) to CRDT plumbing.
+
+**Decision.** Only `items` and `day_notes` live in the Y.Doc. The materializer reconciles `plan_items` (full upsert+delete) and updates `plan_days.notes` for day_ids that already exist. `plan_days` lifecycle, `plan_destinations`, and `plan_hotels` stay REST-driven.
+
+**Rejected.**
+- Mirror everything in Y.Doc — biggest blast radius if reconciliation is buggy; couples date-range UX to Yjs round-trip.
+- Mirror items + hotels + day_notes — hotels carry joined `places.*` columns that the Y.Doc can't easily hold without duplicating place data.
+
+**Tripwires.**
+- If users complain that adding a hotel doesn't show up live for collaborators, migrate hotels to the Y.Doc (joined fields stay REST-fetched on demand).
+- If owner date-range edits feel disconnected (other clients keep stale day list until reload), introduce a small Y.Doc "version" key that bumps on REST mutations and triggers a refetch.
+
 ## 2026-04-19 — Hocuspocus over Liveblocks
 
 **Context.** Real-time collab requires a Yjs WebSocket server with auth, persistence, and role-based write-gating.

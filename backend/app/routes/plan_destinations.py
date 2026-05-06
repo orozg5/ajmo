@@ -11,6 +11,7 @@ from app.services.plans.destinations import (
     get_destinations_for_plan,
     update_destination,
 )
+from app.services.social.members import assert_plan_writer
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +24,9 @@ async def create_destination_route(
     body: DestinationCreate,
     current_user: str = Depends(get_current_user),
 ) -> DestinationResponse:
-    """Add a destination to a plan."""
+    """Add a destination to a plan. Owner or editor only."""
     try:
+        await assert_plan_writer(plan_id, current_user)
         return await create_destination(
             plan_id,
             body.country,
@@ -32,6 +34,8 @@ async def create_destination_route(
             body.sort_order,
             body.day_numbers,
         )
+    except PermissionError:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id!r} not found")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception:
@@ -59,8 +63,9 @@ async def update_destination_route(
     body: DestinationUpdate,
     current_user: str = Depends(get_current_user),
 ) -> DestinationResponse:
-    """Update a destination's country/city/sort_order or replace its day assignments."""
+    """Update a destination's country/city/sort_order or replace its day assignments. Owner or editor only."""
     try:
+        await assert_plan_writer(plan_id, current_user)
         result = await update_destination(
             destination_id,
             body.country,
@@ -71,6 +76,8 @@ async def update_destination_route(
         if result is None:
             raise HTTPException(status_code=404, detail=f"Destination {destination_id!r} not found")
         return result
+    except PermissionError:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id!r} not found")
     except HTTPException:
         raise
     except ValueError as exc:
@@ -86,10 +93,13 @@ async def delete_destination_route(
     destination_id: str,
     current_user: str = Depends(get_current_user),
 ) -> Response:
-    """Delete a destination from a plan."""
+    """Delete a destination from a plan. Owner or editor only."""
     try:
+        await assert_plan_writer(plan_id, current_user)
         await delete_destination(destination_id)
         return Response(status_code=204)
+    except PermissionError:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id!r} not found")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception:

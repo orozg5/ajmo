@@ -21,8 +21,8 @@ Phase 4 shipped: key-free map stack (OpenFreeMap tiles, Photon + Nominatim geoco
   - Key-free stack (OpenFreeMap + Photon + Valhalla + `timezonefinder`); geocoding on enrichment; `PlanMap` component with clustering, filters, cross-highlight; 3-col desktop + mobile drawer.
 - [x] Phase 4.5 — Cleanup pass (no formal phase)
   - Image source switched to Pexels (was Wikipedia → was LLM); geocoder simplified to Nominatim-only; `plan_items.place_id` FK + read-time JOIN so backfills heal existing items; transport leaves the LLM (`services/transport/cross_city.py` orchestrator over OSRM + Transitous + flight estimator; new `/transit/{directions,osrm-route}` routes; `useDayTransport` split into `useSameDayTransportOptions` + `useSameDayTransportInsert`); generated openapi-ts client deleted, hand-typed shims stay. Plan editor (`EditPlanDialog` + `sync_days` + owner-only PATCH/DELETE) and dashboard rebuild (`HomeHero` + `TripsExplorer`) shipped here. See ADRs 2026-05-04 / 2026-05-05 / 2026-05-06 and `docs/AUDIT.md`.
-- [ ] Phase 5 — Social: friends, invites, comments, reactions, ratings (active)
-- [ ] Phase 6 — Real-time collaboration (Yjs + Hocuspocus)
+- [~] Phase 5 — Social: friends + invites + roles shipped (2026-05-06). Comments / reactions / ratings / activity feed deferred per user direction.
+- [~] Phase 6 — Real-time collaboration (Yjs + Hocuspocus) shipped (2026-05-06). Y.Doc holds items + day_notes only; hotels + destinations remain REST-driven. Awareness/cursors/presence avatars deferred.
 - [ ] Phase 7 — Offline + PWA
 - [ ] Phase 8 — Onboarding + motion polish
 - [ ] Phase 9 — Hardening + observability

@@ -12,7 +12,7 @@
 - Shared enrichment orchestrator: `app/services/ai/enrichment.py` — `get_place_data(name, destination, item_type)` is the single entry point; never reimplement inline.
 - Pydantic schemas in `app/schemas/`, one file per domain. Request models prefixed by domain (`PlanCreate`, `DestinationCreate`, `DestinationUpdate`). Response models end in `Response` (`PlanResponse`, `AiSuggestionItemResponse`, `TransitDirectionsResponse`, `OsrmRouteResponse`). All route handlers must declare a typed return annotation.
 - `item_type` validation: call `validate_item_type()` from `app/constants.py` via a `@field_validator` on the schema — never validate inline in route handlers.
-- Config: `pydantic_settings.BaseSettings` in `app/config.py`. **All AI-related env vars are required** (`AI_MODEL`, `FALLBACK_AI_MODEL`, `OLLAMA_MODEL`, `OLLAMA_BASE_URL`, `OLLAMA_KEEP_ALIVE`, `OLLAMA_NUM_CTX`, `OLLAMA_REASONING`, `OLLAMA_REPEAT_PENALTY`, and the two per-feature chains `AI_PROVIDER_CHAIN_ENRICH`, `AI_PROVIDER_CHAIN_SUGGESTIONS`). No global `AI_PROVIDER_CHAIN`. Cross-city transport is not LLM-driven so has no chain. Image source is required: `PEXELS_API_KEY`. Geocoder/Transitous identity: `GEOCODER_USER_AGENT`. Never add defaults — documented in `.env.example` only.
+- Config: `pydantic_settings.BaseSettings` in `app/config.py`. **All AI-related env vars are required** (`AI_MODEL`, `FALLBACK_AI_MODEL`, `OLLAMA_MODEL`, `OLLAMA_BASE_URL`, `OLLAMA_KEEP_ALIVE`, `OLLAMA_NUM_CTX`, `OLLAMA_REASONING`, `OLLAMA_REPEAT_PENALTY`, and the two per-feature chains `AI_PROVIDER_CHAIN_ENRICH`, `AI_PROVIDER_CHAIN_SUGGESTIONS`). No global `AI_PROVIDER_CHAIN`. Cross-city transport is not LLM-driven so has no chain. Image source is required: `PEXELS_API_KEY`. Geocoder/Transitous identity: `GEOCODER_USER_AGENT`. Collab service handshake requires `COLLAB_SHARED_SECRET` (matched with `secrets.compare_digest` on inbound `X-Collab-Secret` headers) and `YJS_IDLE_MS` (materializer debounce in milliseconds). Never add defaults — documented in `.env.example` only.
 - Services return `None` for not-found; route handlers raise `HTTPException(404)` — never raise HTTP exceptions from service files.
 - Error pattern in routes: `ValueError → 422`, uncaught `Exception → 500` with `logger.exception()`.
 - Specialized errors: `services/plans/days.py:DateShrinkBlocked` (subclasses `ValueError`) is raised when a plan's date-range change would drop days that hold items; route handlers translate it to `409 Conflict`.
@@ -40,11 +40,12 @@
 
 ## Collaboration
 
-- `collab/` Node service runs Hocuspocus. FastAPI exposes three internal endpoints for it:
-  - `POST /internal/collab/authorize` — JWT → `(user_id, role)` resolution, shared-secret-guarded.
-  - `POST /internal/collab/changed` — debounce signal for the materializer.
-  - `GET /internal/collab/seed?plan_id=…` — builds base64 `Y.Doc.toUpdate()` from relational on cold load.
-- Materializer lives in `app/services/collab/materializer.py`, runs as a FastAPI background task per plan, debounced 2-5s after last change signal.
+- `collab/` Node service runs Hocuspocus. FastAPI exposes three internal endpoints for it, all guarded by the `X-Collab-Secret` header (matched with `secrets.compare_digest` against `settings.COLLAB_SHARED_SECRET`):
+  - `POST /internal/collab/authorize` — JWT → `(user_id, role)` resolution. Role comes from `services/social/members.py:get_role` (owner via `plans.owner_id`, otherwise `plan_members.role`).
+  - `POST /internal/collab/changed` — debounce signal; calls `services/collab/materializer.py:schedule(plan_id)` to (re)start the per-plan idle timer.
+  - `GET /internal/collab/seed?plan_id=…` — builds base64 `Y.Doc.get_update()` from `plan_items` + `plan_days.notes` (no hotels/destinations) on cold load when `plans.yjs_state IS NULL`.
+- Materializer lives in `app/services/collab/materializer.py`, per-plan `asyncio.Task` with `YJS_IDLE_MS` debounce (default 30s). On fire it decodes `yjs_state` with `pycrdt` and reconciles **only** `plan_items` (full upsert+delete scoped by `plan_id`) and `plan_days.notes` (UPDATE for day_ids already on the plan). Hotels, destinations, and the `plan_days` lifecycle stay REST-driven (ADR 2026-05-06).
+- `plans.yjs_state` is a BYTEA blob; `services/plans/crud.py:strip_yjs_state` filters it out of any Pydantic-serialized HTTP response.
 
 ## AI / RAG — two-layer cache (unchanged from v1)
 
@@ -98,8 +99,11 @@ Volatile fields per item type (price_range, opening_hours, amenities, check_in_t
 | Transport suggestions (`/ai/transport-suggestions/cross-city`, `/ai/transport-suggestions/stream`) | `routes/ai.py` | `services/ai/transport.py` (cache + pair graph via `transport_pairs.py`) → `services/transport/cross_city.py` (multi-source orchestrator) → `services/transit/directions.py` (Transitous train/bus/ferry), `services/transport/osrm.py` (OSRM driving), `services/transport/flight_estimator.py` (haversine + cruise) |
 | Same-day routing (`/transit/directions`, `/transit/osrm-route`) | `routes/transit.py` | `services/transit/directions.py` (Transitous public-transit), `services/transport/osrm.py` (FOSSGIS OSRM, walk/bike/drive profiles) |
 | User preferences | `routes/users.py` | `services/users/preferences.py` |
-| Friends | `routes/social.py` | `services/social/friends.py` |
-| Invites | `routes/social.py` | `services/social/invites.py` |
-| Comments / reactions / ratings / activity | `routes/social.py` | `services/social/{comments,reactions,ratings,activity}.py` |
+| Profile / friend search | `routes/social.py` (`/social/users/search`) | `services/users/search.py` |
+| Friends | `routes/social.py` (`friends_router`) | `services/social/friends.py` |
+| Plan invites | `routes/social.py` (`plan_invites_router`, `invite_router`) | `services/social/invites.py` |
+| Plan members + role resolution | `routes/social.py` (`plan_members_router`) | `services/social/members.py` (incl. `get_role`) |
 | Storage signed URLs | `routes/storage.py` | `services/storage/signed.py` |
-| Collab internal | `routes/collab.py` | `services/collab/{authorize,seed,materializer}.py` |
+| Collab internal (`/internal/collab/{authorize,changed,seed}`) | `routes/collab.py` | `services/collab/{authorize,seed,materializer,schema}.py` |
+
+**Deferred from Phase 5** (no service files yet, schema columns in place): comments, reactions, ratings, activity feed.

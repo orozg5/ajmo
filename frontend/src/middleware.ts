@@ -37,12 +37,20 @@ export async function middleware(request: NextRequest) {
   if (!user && !isAuthRoute && !isCallback) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
+    // Preserve the original target (path + query) so the login form can
+    // bounce the user back after sign-in. Skip "/" — there's nothing to
+    // come back to.
+    if (pathname !== "/") {
+      url.searchParams.set("next", pathname + request.nextUrl.search);
+    }
     return NextResponse.redirect(url);
   }
 
   if (user && isAuthRoute) {
     const url = request.nextUrl.clone();
-    url.pathname = "/";
+    const next = request.nextUrl.searchParams.get("next");
+    url.pathname = next && next.startsWith("/") ? next : "/";
+    url.search = "";
     return NextResponse.redirect(url);
   }
 

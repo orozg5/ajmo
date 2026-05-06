@@ -1,26 +1,38 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type * as Y from "yjs";
 
 import {
-  addItem as apiAddItem,
   getDays as apiGetDays,
   removeDay as apiRemoveDay,
-  removeItem as apiRemoveItem,
-  reorderItems as apiReorderItems,
-  updateDay as apiUpdateDay,
-  updateItemNotes as apiUpdateItemNotes,
   type AddItemPayload,
   type PlanDay,
   type PlanItem,
+  type PlanRole,
   type ReorderEntry,
 } from "@/lib/api";
-import { sortItems } from "@/features/plans/utils/sortKeys";
+import { createClient } from "@/lib/supabase/client";
+import {
+  type ConnectionStatus,
+  useYAllDayNotes,
+  useYAllItems,
+  useYDoc,
+} from "@/lib/yjs/hooks";
+import {
+  addItem as yAddItem,
+  clearDayContent as yClearDayContent,
+  removeItem as yRemoveItem,
+  reorderItems as yReorderItems,
+  setDayNotes as ySetDayNotes,
+  updateItemNotes as yUpdateItemNotes,
+} from "@/lib/yjs/mutations";
 
 export interface UsePlanItineraryOptions {
   planId: string;
   initialDays: PlanDay[];
+  role: PlanRole;
 }
 
 export interface UsePlanItineraryReturn {
@@ -32,6 +44,13 @@ export interface UsePlanItineraryReturn {
   reorderItems: (entries: ReorderEntry[]) => Promise<PlanItem[]>;
   updateDayNotes: (dayId: string, notes: string | null) => Promise<PlanDay>;
   isLoading: boolean;
+  role: PlanRole;
+  connectionStatus: ConnectionStatus;
+  /** Live Yjs doc for the current plan room. Null until the auth token is
+   * resolved and the Hocuspocus provider has been created. Consumers that
+   * need to read or write Yjs state directly (e.g. plan-meta broadcast)
+   * should guard on null. */
+  doc: Y.Doc | null;
 }
 
 type DaysCache = PlanDay[];
@@ -40,22 +59,89 @@ function planDaysKey(planId: string): readonly ["plan-itinerary", string] {
   return ["plan-itinerary", planId] as const;
 }
 
-function patchDays(cache: DaysCache | undefined, updater: (days: DaysCache) => DaysCache): DaysCache {
+function patchDays(
+  cache: DaysCache | undefined,
+  updater: (days: DaysCache) => DaysCache,
+): DaysCache {
   return updater(cache ? [...cache] : []);
 }
 
-export function usePlanItinerary({ planId, initialDays }: UsePlanItineraryOptions): UsePlanItineraryReturn {
+export function usePlanItinerary({
+  planId,
+  initialDays,
+  role,
+}: UsePlanItineraryOptions): UsePlanItineraryReturn {
   const queryClient = useQueryClient();
   const queryKey = planDaysKey(planId);
 
-  const query = useQuery<DaysCache>({
+  // Token grab — Yjs needs it for the websocket auth handshake. The hook
+  // re-runs once the session resolves; in the meantime the doc stays null
+  // and the hook serves items from initialDays.
+  const [token, setToken] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createClient();
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (cancelled) return;
+      setToken(data.session?.access_token ?? null);
+      setCurrentUserId(data.session?.user?.id ?? null);
+    });
+
+    // Supabase auto-refreshes the access token roughly 60s before expiry and
+    // emits TOKEN_REFRESHED. We surface the new token to React state so the
+    // useYDoc effect tears down the stale Hocuspocus provider and reconnects
+    // with a fresh JWT — without this the WebSocket would keep getting 403'd
+    // by /internal/collab/authorize once the original token expires.
+    const { data: authSub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (cancelled) return;
+      setToken(session?.access_token ?? null);
+      setCurrentUserId(session?.user?.id ?? null);
+    });
+
+    return () => {
+      cancelled = true;
+      authSub.subscription.unsubscribe();
+    };
+  }, [planId]);
+
+  const { doc, status: connectionStatus, isSynced } = useYDoc({
+    planId,
+    token,
+    initialRole: role,
+  });
+
+  const daysQuery = useQuery<DaysCache>({
     queryKey,
     queryFn: () => apiGetDays(planId),
     initialData: initialDays,
     staleTime: 5_000,
   });
 
-  const days = query.data ?? [];
+  const restDays = useMemo(() => daysQuery.data ?? [], [daysQuery.data]);
+  const allItems = useYAllItems(doc);
+  const allNotes = useYAllDayNotes(doc);
+
+  const days: PlanDay[] = useMemo(() => {
+    if (!doc || !isSynced) return restDays;
+    // Once Yjs has synced, items + day-notes come from the doc; the rest of
+    // each day (id, day_number, date, title) stays REST-driven.
+    return restDays.map((day) => {
+      // `in` distinguishes "Yjs explicitly set notes (possibly to '')" from
+      // "Yjs has never seen this day" — the latter falls back to REST so
+      // SSR-rendered notes survive the first client paint.
+      const yNotes = day.id in allNotes ? allNotes[day.id] : null;
+      return {
+        ...day,
+        items: allItems[day.id]
+          ? allItems[day.id].map((item) => ({ ...item, plan_id: planId }))
+          : day.items.map((item) => ({ ...item, plan_id: planId })),
+        notes: yNotes !== null ? yNotes : day.notes ?? null,
+      };
+    });
+  }, [doc, isSynced, restDays, allItems, allNotes, planId]);
 
   const removeDayMutation = useMutation({
     mutationFn: (dayId: string) => apiRemoveDay(planId, dayId),
@@ -65,6 +151,9 @@ export function usePlanItinerary({ planId, initialDays }: UsePlanItineraryOption
       queryClient.setQueryData<DaysCache>(queryKey, (cache) =>
         patchDays(cache, (prev) => prev.filter((day) => day.id !== dayId)),
       );
+      // Drop any Yjs content scoped to this day so the materializer doesn't
+      // try to upsert items pointing at a now-deleted plan_days row.
+      if (doc) yClearDayContent(doc, dayId);
       return { previous };
     },
     onError: (_err, _dayId, context) => {
@@ -72,156 +161,80 @@ export function usePlanItinerary({ planId, initialDays }: UsePlanItineraryOption
     },
   });
 
-  const addItemMutation = useMutation({
-    mutationFn: ({ dayId, payload }: { dayId: string; payload: AddItemPayload }) =>
-      apiAddItem(planId, dayId, payload),
-    onSuccess: (newItem, { dayId }) => {
-      queryClient.setQueryData<DaysCache>(queryKey, (cache) =>
-        patchDays(cache, (prev) =>
-          prev.map((day) =>
-            day.id === dayId ? { ...day, items: sortItems([...day.items, newItem]) } : day,
-          ),
-        ),
-      );
-    },
-  });
+  function handleRemoveDay(dayId: string): void {
+    if (role === "viewer") return;
+    removeDayMutation.mutate(dayId);
+  }
 
-  const removeItemMutation = useMutation({
-    mutationFn: ({ itemId }: { dayId: string; itemId: string }) => apiRemoveItem(planId, itemId),
-    onMutate: async ({ dayId, itemId }) => {
-      await queryClient.cancelQueries({ queryKey });
-      const previous = queryClient.getQueryData<DaysCache>(queryKey);
-      queryClient.setQueryData<DaysCache>(queryKey, (cache) =>
-        patchDays(cache, (prev) =>
-          prev.map((day) =>
-            day.id === dayId
-              ? { ...day, items: day.items.filter((item) => item.id !== itemId) }
-              : day,
-          ),
-        ),
-      );
-      return { previous };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
-    },
-  });
-
-  const updateNotesMutation = useMutation({
-    mutationFn: ({ itemId, notes }: { dayId: string; itemId: string; notes: string | null }) =>
-      apiUpdateItemNotes(planId, itemId, notes),
-    onSuccess: (updatedItem, { dayId }) => {
-      queryClient.setQueryData<DaysCache>(queryKey, (cache) =>
-        patchDays(cache, (prev) =>
-          prev.map((day) =>
-            day.id === dayId
-              ? {
-                  ...day,
-                  items: day.items.map((item) =>
-                    item.id === updatedItem.id ? updatedItem : item,
-                  ),
-                }
-              : day,
-          ),
-        ),
-      );
-    },
-  });
-
-  const reorderMutation = useMutation({
-    mutationFn: (entries: ReorderEntry[]) => apiReorderItems(planId, entries),
-    onMutate: async (entries) => {
-      await queryClient.cancelQueries({ queryKey });
-      const previous = queryClient.getQueryData<DaysCache>(queryKey);
-      const updatesById = new Map(entries.map((entry) => [entry.id, entry] as const));
-      queryClient.setQueryData<DaysCache>(queryKey, (cache) =>
-        patchDays(cache, (prev) => {
-          const touchedDayIds = new Set<string>();
-          for (const entry of entries) touchedDayIds.add(entry.day_id);
-          for (const day of prev) {
-            if (day.items.some((i) => updatesById.has(i.id))) touchedDayIds.add(day.id);
-          }
-          const allItems = prev.flatMap((day) => day.items);
-          const patched = allItems.map((item) => {
-            const patch = updatesById.get(item.id);
-            if (!patch) return item;
-            return {
-              ...item,
-              sort_key: patch.sort_key,
-              day_id: patch.day_id,
-              destination_id: patch.destination_id ?? null,
-            };
-          });
-          return prev.map((day) => ({
-            ...day,
-            items: sortItems(
-              patched.filter(
-                (item) =>
-                  item.day_id === day.id &&
-                  !(touchedDayIds.has(day.id) && item.item_type === "transport"),
-              ),
-            ),
-          }));
-        }),
-      );
-      return { previous };
-    },
-    onError: (_err, _entries, context) => {
-      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey });
-    },
-  });
-
-  const updateDayNotesMutation = useMutation({
-    mutationFn: ({ dayId, notes }: { dayId: string; notes: string | null }) =>
-      apiUpdateDay(planId, dayId, { notes }),
-    onMutate: async ({ dayId, notes }) => {
-      await queryClient.cancelQueries({ queryKey });
-      const previous = queryClient.getQueryData<DaysCache>(queryKey);
-      queryClient.setQueryData<DaysCache>(queryKey, (cache) =>
-        patchDays(cache, (prev) =>
-          prev.map((day) => (day.id === dayId ? { ...day, notes } : day)),
-        ),
-      );
-      return { previous };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
-    },
-  });
-
-  const isLoading =
-    removeDayMutation.isPending ||
-    addItemMutation.isPending ||
-    removeItemMutation.isPending ||
-    updateNotesMutation.isPending ||
-    reorderMutation.isPending ||
-    updateDayNotesMutation.isPending;
+  const isViewer = role === "viewer";
 
   const addItem = useCallback(
-    (dayId: string, payload: AddItemPayload) => addItemMutation.mutateAsync({ dayId, payload }),
-    [addItemMutation],
+    async (dayId: string, payload: AddItemPayload): Promise<PlanItem> => {
+      if (isViewer) throw new Error("Viewers can't add items");
+      if (!doc) throw new Error("Collab connection not ready yet");
+      const day = restDays.find((entry) => entry.id === dayId);
+      const destinationFallback = day
+        ? day.items.find((item) => item.destination_id)?.destination_id ?? null
+        : null;
+      return yAddItem(doc, dayId, payload, {
+        addedBy: currentUserId,
+        destinationFallback,
+      });
+    },
+    [doc, restDays, currentUserId, isViewer],
   );
+
+  const removeItem = useCallback(
+    (_dayId: string, itemId: string) => {
+      if (isViewer || !doc) return;
+      yRemoveItem(doc, itemId);
+    },
+    [doc, isViewer],
+  );
+
+  const updateItemNotes = useCallback(
+    (_dayId: string, itemId: string, notes: string | null) => {
+      if (isViewer || !doc) return;
+      yUpdateItemNotes(doc, itemId, notes);
+    },
+    [doc, isViewer],
+  );
+
+  const reorderItems = useCallback(
+    async (entries: ReorderEntry[]): Promise<PlanItem[]> => {
+      if (isViewer || !doc) return [];
+      yReorderItems(doc, entries);
+      return entries.map((entry) => ({
+        id: entry.id,
+        plan_id: planId,
+        day_id: entry.day_id,
+        sort_key: entry.sort_key,
+        destination_id: entry.destination_id ?? null,
+      }) as unknown as PlanItem);
+    },
+    [doc, planId, isViewer],
+  );
+
   const updateDayNotes = useCallback(
-    (dayId: string, notes: string | null) => updateDayNotesMutation.mutateAsync({ dayId, notes }),
-    [updateDayNotesMutation],
-  );
-  const reorder = useCallback(
-    (entries: ReorderEntry[]) => reorderMutation.mutateAsync(entries),
-    [reorderMutation],
+    async (dayId: string, notes: string | null): Promise<PlanDay> => {
+      if (!isViewer && doc) ySetDayNotes(doc, dayId, notes);
+      const day = restDays.find((entry) => entry.id === dayId);
+      return { ...(day as PlanDay), notes };
+    },
+    [doc, restDays, isViewer],
   );
 
   return {
     days,
-    removeDay: (dayId: string) => removeDayMutation.mutate(dayId),
+    removeDay: handleRemoveDay,
     addItem,
-    removeItem: (dayId: string, itemId: string) => removeItemMutation.mutate({ dayId, itemId }),
-    updateItemNotes: (dayId: string, itemId: string, notes: string | null) =>
-      updateNotesMutation.mutate({ dayId, itemId, notes }),
-    reorderItems: reorder,
+    removeItem,
+    updateItemNotes,
+    reorderItems,
     updateDayNotes,
-    isLoading,
+    isLoading: removeDayMutation.isPending,
+    role,
+    connectionStatus,
+    doc,
   };
 }

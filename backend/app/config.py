@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     GEOCODER_USER_AGENT: str
     PEXELS_API_KEY: str
     CORS_ORIGINS: list[str]
+    COLLAB_SHARED_SECRET: str
+    YJS_IDLE_MS: int
 
     # `extra="ignore"` so removing a settings field doesn't break dev .env
     # files that still carry the now-deprecated key. Required fields still

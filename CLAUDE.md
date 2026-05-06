@@ -11,7 +11,7 @@ AI enriches plan items with live data (description, price, hours) using RAG via 
 /
 ├── frontend/               Next.js 15 (App Router), TypeScript, Tailwind, Shadcn/UI
 ├── backend/                FastAPI (Python), REST API + AI/RAG logic
-├── collab/                 Hocuspocus Yjs WebSocket server (Phase 6 wiring)
+├── collab/                 Hocuspocus Yjs WebSocket server (shipped Phase 6)
 ├── supabase/
 │   └── schema.sql          Database schema (v2 source of truth, single file)
 ├── docs/                   Standing docs — audit, architecture, decisions, phase plans
@@ -27,7 +27,7 @@ AI enriches plan items with live data (description, price, hours) using RAG via 
 
 - Frontend: `cd frontend && npm run dev` (localhost:3000)
 - Backend: `cd backend && .venv\Scripts\activate && uvicorn main:app --reload` (localhost:8000)
-- Collab (Phase 6+): `cd collab && npm run dev` (localhost:1234)
+- Collab: `cd collab && npm run dev` (localhost:1234) — required for itinerary live editing
 
 ## Resume-across-sessions
 
@@ -57,7 +57,8 @@ AI enriches plan items with live data (description, price, hours) using RAG via 
 - Never modify Supabase RLS policies without flagging it first.
 - Never use the Next.js `pages/` router.
 - Never modify `places` records from the frontend — backend only.
-- Never write to `yjs_state` directly — only Hocuspocus (via `@hocuspocus/extension-database`) writes it.
+- Never write to `yjs_state` directly — only Hocuspocus (via `@hocuspocus/extension-database`) writes it. FastAPI may only read it (materializer + `/internal/collab/seed`).
+- Never extend the Y.Doc schema beyond `items` + `day_notes` without an ADR — hotels, destinations, and `plan_days` lifecycle stay REST-driven (ADR 2026-05-06).
 - Never hand-parse LLM output — always use `.with_structured_output(PydanticModel)` in backend AI services.
 - Never hardcode env var defaults in `backend/app/config.py` — every AI-related env var must be required and documented in `.env.example`.
 - Never use underscore prefixes on any name, including "private" helpers.

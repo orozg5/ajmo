@@ -27,6 +27,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 import { type EnrichedItem, type PlanItem } from "@/lib/api";
 import TransportCard from "@/features/plans/components/transport/TransportCard";
+import { useItemNotes } from "@/features/plans/hooks/useItemNotes";
 import { ITEM_TYPE_STYLE, type ItemType } from "@/features/plans/utils/itemType";
 
 const REACTION_BUTTONS: Array<{ key: string; label: string; Icon: React.ComponentType<{ className?: string; strokeWidth?: number }> }> = [
@@ -62,7 +63,11 @@ function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = f
   const TypeIcon = typeStyle?.Icon;
 
   const [isExpanded, setIsExpanded] = useState(false);
-  const [notes, setNotes] = useState(item.notes ?? "");
+  const { value: notes, handleChange: handleNotesChange } = useItemNotes({
+    itemId: item.id,
+    initial: item.notes,
+    onPersist: onNotesUpdate,
+  });
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver, active } = useSortable({
     id: item.id,
@@ -84,10 +89,6 @@ function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = f
   } as const;
 
   const showDropIndicator = isOver && active && active.id !== item.id;
-
-  function handleNotesBlur() {
-    onNotesUpdate(notes.trim() === "" ? null : notes.trim());
-  }
 
   return (
     <>
@@ -294,8 +295,7 @@ function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = f
             <p className="text-xs font-medium uppercase tracking-wide text-ink-subtle">Notes</p>
             <Textarea
               value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-              onBlur={handleNotesBlur}
+              onChange={(event) => handleNotesChange(event.target.value)}
               placeholder="Add your notes here…"
               rows={3}
               className="resize-none text-sm"

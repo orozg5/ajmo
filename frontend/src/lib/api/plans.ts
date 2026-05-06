@@ -64,6 +64,7 @@ export interface PlanItem {
   place_id: string | null;
   ai_data: EnrichedItem | CrossCityMarker | SameDayTransportData | null;
   destination_id: string | null;
+  added_by?: string | null;
 }
 
 export interface PlanDay {

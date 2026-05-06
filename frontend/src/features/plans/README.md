@@ -9,7 +9,7 @@ Components under `plans/components/` are grouped by what they *do*, not by their
 | Folder | What lives here |
 | --- | --- |
 | `dashboard/` | Plan list entry views — `DashboardSections` (top-level composer), `HomeHero` (greeting + trip-stat banner driven by `tripStatus`), `TripsExplorer` (tabs over scopes, filter bar, paginated card grid), `TripFilterBar` (search + sort + period filters), `TripStatusPill`, `PlanCard`, `EmptyPlansState`, `SkeletonCard`. |
-| `itinerary/` | The plan page itself — `PlanHeader` (page chrome + edit/delete entry points), `ItineraryPlanner` (DnD + panel coordinator + `DragOverlayCard`), `DayView`, `DayTabs` (DnD-droppable day chips, replaces the legacy `DaySidebar`), `DayNotesEditor`, `AddNoteInline`, `ItemCard`, `EditPlanDialog` (split into `EditPlanGeneralTab`, `EditPlanDestinationsTab`, `EditPlanDangerTab`), `DeletePlanDialog`. |
+| `itinerary/` | The plan page itself — `PlanWorkspace` (role-aware shell that initializes the Yjs doc and threads `role` + `doc` + `liveMeta` into the children), `PlanHeader` (page chrome + edit/delete/share entry points; mirrors plan-meta over the Y.Doc), `ItineraryPlanner` (DnD + panel coordinator + `DragOverlayCard`; drag-activation distance is infinity for viewers), `DayView`, `DayTabs` (DnD-droppable day chips, replaces the legacy `DaySidebar`), `DayNotesEditor`, `AddNoteInline`, `ItemCard`, `EditPlanDialog` (split into `EditPlanGeneralTab`, `EditPlanDestinationsTab`, `EditPlanDangerTab`; broadcasts edits to peers via `setPlanMeta()` after REST save), `DeletePlanDialog`. |
 | `destinations/` | `DestinationsEditor` — destinations list (country, city, day-number selection) shared between the wizard and the EditPlanDestinationsTab. |
 | `search/` | Adding items — `ItemSearch` (autocomplete), `SuggestionsStrip` + `SuggestionCard` (AI picks). |
 | `transport/` | Transport UI — `TransportCard`, `CrossCityTransportPanel`, `InlineTransportBar`. |
@@ -22,14 +22,15 @@ Each hook owns one slice of server state + its optimistic updates. Components ne
 
 | File | Owns |
 | --- | --- |
-| `usePlanItinerary.ts` | Days + items for an open plan. Mutations: add/remove/reorder items, update notes, add/remove day. |
+| `usePlanItinerary.ts` | Days + items for an open plan. Initializes the Yjs Hocuspocus provider via `useYDoc(planId)`, observes `useYAllItems` + `useYAllDayNotes`, and routes mutations (add/remove/reorder items, update day notes, add/remove day) through `lib/yjs/mutations.ts`. Viewer mode short-circuits all writes. |
 | `useSameDayTransportOptions.ts` | Per-pair fan-out for the inline transport bar — fires `POST /transit/osrm-route` for `foot`/`bike`/`driving` and `POST /transit/directions` (Transitous) for transit. Buttons hide on 204. |
 | `useSameDayTransportInsert.ts` | State + insertion logic for adding a same-day transport plan item from a chosen mode option (writes `ai_data.same_day_pair`). |
 | `useCrossCityTransport.ts` | Cross-city transport suggestions (SSE-streamed; backend orchestrates OSRM + Transitous + flight estimator — no LLM, ADR 2026-05-06) + panel state. |
-| `useHotels.ts` | Hotel items attached to a plan. |
+| `useHotels.ts` | Hotel items attached to a plan (REST-driven; not in the Y.Doc per ADR 2026-05-06). |
 | `useAiSuggestions.ts` | AI suggestion strip — fetch, refresh, add. |
 | `useItemEnrichment.ts` | Autocomplete + `/ai/enrich` flow. Wrapped by `ItemSearch` and `HotelNameAutocomplete`. |
-| `useDayNotes.ts` | Per-day freeform notes. |
+| `useDayNotes.ts` | Per-day freeform notes; writes through `lib/yjs/mutations.ts:setDayNotes` and observes echoes via the Y.Doc. |
+| `useItemNotes.ts` | Per-item freeform notes; writes through `lib/yjs/mutations.ts:updateItemNotes` and observes echoes via the Y.Doc (mirrors the `useDayNotes` shape). |
 | `useDestinations.ts` | Plan destinations CRUD (uses `PATCH /plans/{id}/destinations/{destination_id}` for inline edits). |
 | `useDashboardPlans.ts` | Dashboard list queries (owner / member / public). |
 | `usePlanFilters.ts` | Dashboard filter/sort/search/pagination state machine consumed by `TripsExplorer` + `TripFilterBar`. |

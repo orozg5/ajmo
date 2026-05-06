@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -21,6 +21,9 @@ type FormValues = z.infer<typeof schema>;
 
 export default function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = searchParams.get("next");
+  const safeNext = next && next.startsWith("/") ? next : "/";
   const [authError, setAuthError] = useState("");
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
@@ -40,17 +43,19 @@ export default function LoginForm() {
       setAuthError(error.message);
       return;
     }
-    router.push("/");
+    router.push(safeNext);
     router.refresh();
   }
 
   async function handleGoogleSignIn() {
     setIsGoogleLoading(true);
     const supabase = createClient();
+    const callback = new URL("/auth/callback", window.location.origin);
+    if (safeNext !== "/") callback.searchParams.set("next", safeNext);
     await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: callback.toString(),
       },
     });
   }

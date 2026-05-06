@@ -12,12 +12,19 @@ logging.basicConfig(
 
 from app.config import settings
 from app.routes.ai import router as ai_router
+from app.routes.collab import router as collab_router
 from app.routes.places import router as places_router
 from app.routes.plan_days import router as plan_days_router
 from app.routes.plan_destinations import router as plan_destinations_router
 from app.routes.plan_hotels import router as plan_hotels_router
 from app.routes.plan_items import router as plan_items_router
 from app.routes.plans import router as plans_router
+from app.routes.social import (
+    friends_router,
+    invite_router,
+    plan_invites_router,
+    plan_members_router,
+)
 from app.routes.storage import router as storage_router
 from app.routes.transit import router as transit_router
 from app.routes.users import router as users_router
@@ -62,6 +69,11 @@ app.include_router(plan_items_router)
 app.include_router(storage_router)
 app.include_router(transit_router)
 app.include_router(users_router)
+app.include_router(friends_router)
+app.include_router(plan_members_router)
+app.include_router(plan_invites_router)
+app.include_router(invite_router)
+app.include_router(collab_router)
 
 
 @app.get("/health", tags=["meta"])

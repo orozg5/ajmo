@@ -11,6 +11,7 @@ import {
   Share2,
 } from "lucide-react";
 import { toast } from "sonner";
+import type * as Y from "yjs";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -19,15 +20,22 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { type DestinationResponse, type Plan, updatePlan } from "@/lib/api";
+import { type DestinationResponse, type Plan, type PlanRole, updatePlan } from "@/lib/api";
+import { setPlanMeta } from "@/lib/yjs/mutations";
+import { type PlanMetaPatch } from "@/lib/yjs/schema";
 import EditPlanDialog from "@/features/plans/components/itinerary/EditPlanDialog";
+import ShareDialog from "@/features/social/components/ShareDialog";
 import { VISIBILITY_ICON, VISIBILITY_LABEL } from "@/features/plans/utils/visibility";
 
 type PlanHeaderProps = {
   plan: Plan;
   destinations: DestinationResponse[];
   isOwner: boolean;
+  role: PlanRole;
+  doc: Y.Doc | null;
+  liveMeta: PlanMetaPatch;
 };
 
 function formatDateRange(from: string | null, to: string | null): string | null {
@@ -46,23 +54,38 @@ function formatDateRange(from: string | null, to: string | null): string | null 
   return only ? only.toLocaleDateString("en-US", yearOptions) : null;
 }
 
-export default function PlanHeader({ plan, destinations, isOwner }: PlanHeaderProps) {
+export default function PlanHeader({ plan, destinations, isOwner, role, doc, liveMeta }: PlanHeaderProps) {
   const reducedMotion = useReducedMotion();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(plan.title);
   const [localTitle, setLocalTitle] = useState(plan.title);
   const [editPlanOpen, setEditPlanOpen] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const canEdit = role === "owner" || role === "editor";
 
   useEffect(() => {
     setLocalTitle(plan.title);
     setDraftTitle(plan.title);
   }, [plan.title]);
 
+  // When a peer broadcasts a title change, mirror it locally. The saving
+  // client also writes to liveMeta, but since localTitle was already updated
+  // optimistically there, this useEffect is a no-op for them. Yjs is the
+  // external system here, so syncing into local state is the intended use.
+  useEffect(() => {
+    if (typeof liveMeta.title === "string" && liveMeta.title !== localTitle) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLocalTitle(liveMeta.title);
+      setDraftTitle(liveMeta.title);
+    }
+  }, [liveMeta.title, localTitle]);
+
   const titleMutation = useMutation({
     mutationFn: (title: string) => updatePlan(plan.id, { title }),
     onSuccess: (next) => {
       setLocalTitle(next.title);
+      if (doc) setPlanMeta(doc, { title: next.title });
     },
   });
 
@@ -88,18 +111,31 @@ export default function PlanHeader({ plan, destinations, isOwner }: PlanHeaderPr
   }
 
   function startEdit() {
-    if (!isOwner) return;
+    if (!canEdit) return;
     setIsEditing(true);
     setDraftTitle(localTitle);
     requestAnimationFrame(() => inputRef.current?.select());
   }
 
-  const dateRange = formatDateRange(plan.date_from, plan.date_to);
-  const VisibilityIcon = VISIBILITY_ICON[plan.visibility];
-  const visibilityLabel = VISIBILITY_LABEL[plan.visibility];
+  const displayDateFrom =
+    liveMeta.date_from !== undefined ? liveMeta.date_from : plan.date_from;
+  const displayDateTo =
+    liveMeta.date_to !== undefined ? liveMeta.date_to : plan.date_to;
+  const displayCoverUrl =
+    liveMeta.cover_image_url !== undefined ? liveMeta.cover_image_url : plan.cover_image_url;
+  const displayDescription =
+    liveMeta.description !== undefined ? liveMeta.description : plan.description;
+  const displayVisibility =
+    typeof liveMeta.visibility === "string"
+      ? (liveMeta.visibility as Plan["visibility"])
+      : plan.visibility;
+
+  const dateRange = formatDateRange(displayDateFrom ?? null, displayDateTo ?? null);
+  const VisibilityIcon = VISIBILITY_ICON[displayVisibility];
+  const visibilityLabel = VISIBILITY_LABEL[displayVisibility];
 
   function handleShare() {
-    toast.info("Sharing lands in Phase 5");
+    setShareDialogOpen(true);
   }
 
   function handleSettings() {
@@ -114,10 +150,10 @@ export default function PlanHeader({ plan, destinations, isOwner }: PlanHeaderPr
       className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm"
     >
       <div className="relative aspect-[16/5] w-full">
-        {plan.cover_image_url ? (
+        {displayCoverUrl ? (
           <Image
-            src={plan.cover_image_url}
-            alt={`${plan.title} cover`}
+            src={displayCoverUrl}
+            alt={`${localTitle} cover`}
             fill
             sizes="(max-width: 768px) 100vw, 1024px"
             className="object-cover"
@@ -158,16 +194,21 @@ export default function PlanHeader({ plan, destinations, isOwner }: PlanHeaderPr
               <h1
                 className={cn(
                   "text-display-xl leading-tight",
-                  isOwner && "cursor-text hover:text-primary/90",
+                  canEdit && "cursor-text hover:text-primary/90",
                 )}
                 onClick={startEdit}
-                title={isOwner ? "Click to rename" : undefined}
+                title={canEdit ? "Click to rename" : undefined}
               >
                 {localTitle}
               </h1>
             )}
-            {plan.description ? (
-              <p className="max-w-2xl text-sm text-ink-subtle">{plan.description}</p>
+            {displayDescription ? (
+              <p className="max-w-2xl text-sm text-ink-subtle">{displayDescription}</p>
+            ) : null}
+            {role !== "owner" ? (
+              <Badge variant={role === "viewer" ? "outline" : "secondary"} className="capitalize">
+                {role}
+              </Badge>
             ) : null}
           </div>
 
@@ -202,16 +243,11 @@ export default function PlanHeader({ plan, destinations, isOwner }: PlanHeaderPr
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button size="sm" variant="outline" onClick={handleShare}>
-                <Share2 className="size-4" strokeWidth={1.5} />
-                Share
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Share this trip (Phase 5)</TooltipContent>
-          </Tooltip>
-          {isOwner ? (
+          <Button size="sm" variant="outline" onClick={handleShare}>
+            <Share2 className="size-4" strokeWidth={1.5} />
+            Share
+          </Button>
+          {canEdit ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button size="sm" variant="ghost" onClick={handleSettings}>
@@ -219,20 +255,45 @@ export default function PlanHeader({ plan, destinations, isOwner }: PlanHeaderPr
                   Settings
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Edit trip, destinations, and danger zone</TooltipContent>
+              <TooltipContent>
+                {role === "owner"
+                  ? "Edit trip, destinations, and danger zone"
+                  : "Edit trip and destinations"}
+              </TooltipContent>
             </Tooltip>
           ) : null}
         </div>
       </div>
 
-      {isOwner ? (
+      {canEdit ? (
         <EditPlanDialog
           open={editPlanOpen}
           onOpenChange={setEditPlanOpen}
-          plan={plan}
+          plan={{
+            ...plan,
+            title: localTitle,
+            description: displayDescription ?? null,
+            date_from: displayDateFrom ?? null,
+            date_to: displayDateTo ?? null,
+            visibility: displayVisibility,
+            cover_image_url: displayCoverUrl ?? null,
+            cover_image_path:
+              liveMeta.cover_image_path !== undefined
+                ? liveMeta.cover_image_path
+                : plan.cover_image_path,
+          }}
           destinations={destinations}
+          role={role}
+          doc={doc}
         />
       ) : null}
+
+      <ShareDialog
+        open={shareDialogOpen}
+        onOpenChange={setShareDialogOpen}
+        planId={plan.id}
+        isOwner={isOwner}
+      />
     </motion.section>
   );
 }

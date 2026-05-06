@@ -1,7 +1,7 @@
-import { getPlan, initializeDays, getDestinations } from "@/lib/api";
+import { getPlan, initializeDays, getDestinations, getMyPlanRole } from "@/lib/api";
 import { createClient } from "@/lib/supabase/server";
-import ItineraryPlanner from "@/features/plans/components/itinerary/ItineraryPlanner";
-import PlanHeader from "@/features/plans/components/itinerary/PlanHeader";
+import PlanWorkspace from "@/features/plans/components/itinerary/PlanWorkspace";
+import type { PlanRole } from "@/lib/api";
 
 export default async function PlanPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -19,11 +19,28 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
   ]);
 
   const isOwner = user?.id === plan.owner_id;
+  // Owners are inferred from the plan record; for everyone else hit the role
+  // endpoint, which consults plan_members and falls back to public visibility.
+  let role: PlanRole = "viewer";
+  if (isOwner) {
+    role = "owner";
+  } else {
+    try {
+      role = (await getMyPlanRole(id, token)).role;
+    } catch {
+      role = "viewer";
+    }
+  }
 
   return (
     <div className="space-y-6 py-4 md:py-6">
-      <PlanHeader plan={plan} destinations={destinations} isOwner={isOwner} />
-      <ItineraryPlanner plan={plan} initialDays={days} destinations={destinations} />
+      <PlanWorkspace
+        plan={plan}
+        initialDays={days}
+        destinations={destinations}
+        isOwner={isOwner}
+        role={role}
+      />
     </div>
   );
 }

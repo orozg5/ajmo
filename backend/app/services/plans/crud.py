@@ -3,10 +3,22 @@ from typing import Literal
 
 from app.db import get_supabase_client
 from app.services.plans.days import sync_days
+from app.services.social.members import get_role
 
 logger = logging.getLogger(__name__)
 
 PlanScope = Literal["owner", "member", "public"]
+
+
+def strip_yjs_state(row: dict) -> dict:
+    """Drop the binary CRDT blob before a row reaches a PlanResponse.
+
+    `plans.yjs_state` is BYTEA and only Hocuspocus writes/reads it. Any plan
+    that has been opened in collab carries a non-null value here, which the
+    Pydantic response model (yjs_state: None) rejects on serialisation.
+    """
+    row.pop("yjs_state", None)
+    return row
 
 
 async def create_plan(data: dict) -> dict:
@@ -15,7 +27,7 @@ async def create_plan(data: dict) -> dict:
     result = supabase.table("plans").insert(data).execute()
     if not result.data:
         raise ValueError("Failed to create plan")
-    return result.data[0]
+    return strip_yjs_state(result.data[0])
 
 
 async def get_plan(plan_id: str) -> dict:
@@ -24,7 +36,7 @@ async def get_plan(plan_id: str) -> dict:
     result = supabase.table("plans").select("*").eq("id", plan_id).execute()
     if not result.data:
         raise ValueError(f"Plan {plan_id!r} not found")
-    return result.data[0]
+    return strip_yjs_state(result.data[0])
 
 
 async def list_user_plans(user_id: str, scope: PlanScope = "owner") -> list[dict]:
@@ -72,16 +84,17 @@ async def list_user_plans(user_id: str, scope: PlanScope = "owner") -> list[dict
         nested = row.pop("plan_destinations", None) or []
         nested.sort(key=lambda item: item.get("sort_order", 0))
         row["destinations"] = nested
+        strip_yjs_state(row)
     return rows
 
 
-async def update_plan(plan_id: str, owner_id: str, data: dict) -> dict:
-    """Update plan fields for the owner and return the updated record.
+async def update_plan(plan_id: str, user_id: str, data: dict) -> dict:
+    """Update plan fields for owners and editors; return the updated record.
 
-    Backend uses the Supabase service_role key, which bypasses the
-    "owner writes plan" RLS policy, so we must filter by owner_id here.
-    Non-owner requests are indistinguishable from a missing plan
-    (both raise ValueError → 404), so we don't leak existence.
+    Backend uses the Supabase service_role key, which bypasses RLS, so we gate
+    here by resolving the caller's role. Anything below editor (viewer or no
+    role) is indistinguishable from a missing plan (both raise ValueError →
+    404), so we don't leak existence.
 
     yjs_state is never written from this path — Hocuspocus is the only writer.
 
@@ -92,11 +105,14 @@ async def update_plan(plan_id: str, owner_id: str, data: dict) -> dict:
     data.pop("yjs_state", None)
     supabase = get_supabase_client()
 
+    role = await get_role(plan_id, user_id)
+    if role not in ("owner", "editor"):
+        raise ValueError(f"Plan {plan_id!r} not found")
+
     current_result = (
         supabase.table("plans")
         .select("date_from, date_to")
         .eq("id", plan_id)
-        .eq("owner_id", owner_id)
         .execute()
     )
     if not current_result.data:
@@ -112,18 +128,17 @@ async def update_plan(plan_id: str, owner_id: str, data: dict) -> dict:
         result = supabase.table("plans").select("*").eq("id", plan_id).execute()
         if not result.data:
             raise ValueError(f"Plan {plan_id!r} not found")
-        return result.data[0]
+        return strip_yjs_state(result.data[0])
 
     result = (
         supabase.table("plans")
         .update(data)
         .eq("id", plan_id)
-        .eq("owner_id", owner_id)
         .execute()
     )
     if not result.data:
         raise ValueError(f"Plan {plan_id!r} not found")
-    return result.data[0]
+    return strip_yjs_state(result.data[0])
 
 
 async def delete_plan(plan_id: str, owner_id: str) -> None:

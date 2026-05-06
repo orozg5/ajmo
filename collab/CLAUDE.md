@@ -9,21 +9,22 @@ Hosts the Hocuspocus Yjs WebSocket server. Separate Node/TS process so FastAPI s
 ```
 collab/
 ├── src/
-│   └── index.ts         Hocuspocus server bootstrap (Phase 6: auth + Postgres + materializer signal)
+│   └── index.ts         Hocuspocus server bootstrap — auth + Postgres + materializer signal + cold-load seed
+├── scripts/
+│   └── check-db.mjs     Dev helper — verifies plans.yjs_state BYTEA round-trip against the configured DATABASE_URL
 ├── package.json
 ├── tsconfig.json
-├── Dockerfile
 └── .env.example
 ```
 
 ## Responsibilities
 
 - Accept `ws://…?token=<jwt>&planId=<uuid>` connections.
-- Call FastAPI `/internal/collab/authorize` with a shared secret to resolve `{ok, role, userId, planId}`.
-- Persist binary Yjs state to `plans.yjs_state` via `@hocuspocus/extension-database`.
-- POST `/internal/collab/changed` to FastAPI on `onChange` — triggers the relational materializer.
-- Seed cold rooms by calling `/internal/collab/seed?plan_id=…` when `yjs_state IS NULL`.
-- Reject `SYNC_UPDATE` messages from `role = viewer` in `beforeHandleMessage`.
+- Call FastAPI `POST /internal/collab/authorize` with the `X-Collab-Secret` header to resolve `{ok, role, userId, planId}` — done in `onAuthenticate`.
+- Persist binary Yjs state to `plans.yjs_state` via `@hocuspocus/extension-database` (raw `pg` for direct BYTEA round-trips, not Supabase REST).
+- POST `/internal/collab/changed` (fire-and-forget, shared-secret-guarded) to FastAPI on `onChange` — triggers the relational materializer.
+- Seed cold rooms by calling `GET /internal/collab/seed?plan_id=…` when the `Database` extension's fetch returns `null`.
+- Block writes from `role = viewer` connections by returning `{ user, readOnly: true }` from `onAuthenticate` (Hocuspocus drops sync updates server-side based on the connection's `readOnly` flag — `beforeHandleMessage` is not used).
 
 ## Hard constraints
 
@@ -42,5 +43,5 @@ collab/
 
 ## Phase notes
 
-- **Phase 0**: scaffold only — package.json, tsconfig, Dockerfile, placeholder index.ts.
-- **Phase 6**: full Hocuspocus wiring, extensions, auth dance, persistence, change signal.
+- **Phase 0**: scaffold only — package.json, tsconfig, placeholder index.ts.
+- **Phase 6 (shipped 2026-05-06)**: full Hocuspocus wiring, `@hocuspocus/extension-database` + `@hocuspocus/extension-logger`, shared-secret auth dance against FastAPI, viewer `readOnly` gate, change-signal POST, cold-load seed fallback. Dockerfile and presence/awareness UI deferred — see `docs/phases/phase-6.md`.

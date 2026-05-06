@@ -18,20 +18,19 @@ src/
 │   ├── brand/                    Logo and brand marks
 │   └── theme/                    ThemeProvider, ThemeToggle, ThemedToaster
 ├── features/                     Feature-scoped components and hooks
-│   ├── auth/components/          LoginForm, RegisterForm, LogoutButton
-│   ├── plans/components/         All itinerary UI components
-│   ├── plans/hooks/              All itinerary data-fetching hooks
+│   ├── auth/components/          LoginForm (forwards ?next), RegisterForm, LogoutButton
+│   ├── plans/components/         Itinerary UI — incl. PlanWorkspace (role-aware Yjs shell)
+│   ├── plans/hooks/              Itinerary data hooks; itinerary + notes route through Y.Doc
 │   ├── map/                      MapLibre components (Phase 4)
-│   ├── collab/                   Yjs providers, awareness, presence (Phase 6)
-│   ├── social/                   Friends, invites, comments, reactions, ratings (Phase 5)
+│   ├── social/                   Friends + invites + plan-members UI (Phase 5; comments/reactions/ratings deferred)
 │   └── settings/                 components/ (PreferencesForm, ProfileForm, SettingsTabs) + constants.ts (interest/dietary/budget enums)
 ├── lib/
 │   ├── api/
 │   │   ├── client.ts             Runtime fetch wrapper (auth headers, error shaping, SSE parser)
-│   │   ├── plans.ts, ai.ts, transit.ts, users.ts  Hand-typed request functions per domain
+│   │   ├── plans.ts, ai.ts, transit.ts, users.ts, social.ts  Hand-typed request functions per domain
 │   │   └── index.ts              Barrel
 │   ├── supabase/                 client.ts (browser) + server.ts (SSR) + profile.ts (RLS-scoped profile chrome fetch)
-│   ├── yjs/                      Doc factory, providers, React hooks (Phase 6)
+│   ├── yjs/                      Doc factory, Hocuspocus provider, mutations, React observer hooks (Phase 6)
 │   ├── map/                      MapLibre init, style, marker helpers (Phase 4)
 │   ├── offline/                  Service worker bootstrap, write queue, query persister (Phase 7)
 │   └── utils.ts                  cn(), isAbortError()
@@ -40,7 +39,7 @@ src/
 
 ## State layering (strict)
 
-- **Yjs** (via `lib/yjs/`) — collaborative itinerary state while a plan is open. Phase 6.
+- **Yjs** (via `lib/yjs/`) — collaborative itinerary state while a plan is open (shipped Phase 6, 2026-05-06). Y.Doc holds `items` (per-day `Y.Array<Y.Map>`) and `day_notes` (`Y.Map<dayId, string>`) only — see `docs/COLLAB.md` and ADR 2026-05-06.
 - **Zustand** (`stores/`) — UI-only client state: theme, offline pill, queued-writes badge, toast store, modal open/close.
 - **React Query** (`@tanstack/react-query`) — server cache. Persists to IndexedDB for the queries tagged `{ persist: true }`.
 - **React Hook Form + Zod** — form state; schemas colocated with the form.
@@ -89,6 +88,7 @@ src/
 ## Hard constraints
 
 - Never put feature components in `components/ui/` — that folder is shadcn primitives only.
-- Never touch Yjs state outside `lib/yjs/` and `features/*/hooks/*` — components should never call `doc.transact(...)` directly.
+- Never touch Yjs state outside `lib/yjs/` and `features/*/hooks/*` — components should never call `doc.transact(...)` directly. Mutations go through `lib/yjs/mutations.ts` (`addItem`, `removeItem`, `reorderItems`, `setDayNotes`, `updateItemNotes`, `clearDayContent`, `setPlanMeta`); reads go through the observer hooks in `lib/yjs/hooks.ts`.
+- Never extend the Y.Doc schema beyond `items` + `day_notes` without an ADR — ADR 2026-05-06 explicitly scopes Yjs to those two surfaces; hotels, destinations, and the `plan_days` lifecycle are REST-driven.
 - Never persist raw query responses that contain an access token.
 - Never use the Next.js `pages/` router.

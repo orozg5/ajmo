@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Settings, LogOut } from "lucide-react";
+import { Settings, LogOut, Users } from "lucide-react";
 
 import Logo from "@/components/brand/Logo";
 import ThemeToggle from "@/components/theme/ThemeToggle";
@@ -76,6 +76,12 @@ export default function Header({
                 </div>
                 <div className="h-px bg-border" />
                 <div className="space-y-0.5 p-1.5">
+                  <Button asChild variant="ghost" size="sm" className="h-9 w-full justify-start gap-2.5 px-2">
+                    <Link href="/social/friends">
+                      <Users className="size-4" strokeWidth={1.5} />
+                      Friends
+                    </Link>
+                  </Button>
                   <Button asChild variant="ghost" size="sm" className="h-9 w-full justify-start gap-2.5 px-2">
                     <Link href="/settings">
                       <Settings className="size-4" strokeWidth={1.5} />

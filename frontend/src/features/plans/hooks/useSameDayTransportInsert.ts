@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import * as Y from "yjs";
 
 import {
   type AddItemPayload,
@@ -9,6 +10,8 @@ import {
 } from "@/lib/api";
 
 import { computeSortKeyBetween } from "@/features/plans/utils/sortKeys";
+import { ensureItemSortKeys } from "@/lib/yjs/mutations";
+import { ROOT_ITEMS } from "@/lib/yjs/schema";
 import { type SameDayModeOption } from "@/features/plans/hooks/useSameDayTransportOptions";
 
 const MODE_TITLE: Record<SameDayModeOption["mode"], string> = {
@@ -46,6 +49,7 @@ function buildNotes(srcTitle: string, dstTitle: string, option: SameDayModeOptio
 
 export interface UseSameDayTransportInsertOptions {
   addItem: (dayId: string, payload: AddItemPayload) => Promise<PlanItem>;
+  doc: Y.Doc | null;
 }
 
 export interface UseSameDayTransportInsertReturn {
@@ -58,8 +62,23 @@ export interface UseSameDayTransportInsertReturn {
   }) => Promise<void>;
 }
 
+function readSortKey(doc: Y.Doc, dayId: string, itemId: string): string | null {
+  const itemsRoot = doc.getMap(ROOT_ITEMS) as Y.Map<Y.Array<Y.Map<unknown>>>;
+  const arr = itemsRoot.get(dayId);
+  if (!arr) return null;
+  for (let index = 0; index < arr.length; index += 1) {
+    const entry = arr.get(index);
+    if (entry?.get("id") === itemId) {
+      const key = entry.get("sort_key");
+      return typeof key === "string" ? key : null;
+    }
+  }
+  return null;
+}
+
 export function useSameDayTransportInsert({
   addItem,
+  doc,
 }: UseSameDayTransportInsertOptions): UseSameDayTransportInsertReturn {
   const [addingKeys, setAddingKeys] = useState<Set<string>>(new Set());
 
@@ -74,6 +93,23 @@ export function useSameDayTransportInsert({
       setAddingKeys((prev) => new Set(prev).add(key));
 
       try {
+        // Legacy items created before yAddItem auto-assigned sort_keys carry
+        // sort_key=null. Backfill the day's keys in place first, then read
+        // the freshly-assigned src/dst keys back out of the doc — otherwise
+        // generateKeyBetween(null, null) returns the smallest possible key
+        // and the new transport jumps to the top of the section.
+        let srcSortKey = srcItem.sort_key;
+        let dstSortKey = dstItem.sort_key;
+        if (doc && (srcSortKey == null || dstSortKey == null)) {
+          ensureItemSortKeys(doc, dayId);
+          srcSortKey = readSortKey(doc, dayId, srcItem.id) ?? srcSortKey;
+          dstSortKey = readSortKey(doc, dayId, dstItem.id) ?? dstSortKey;
+        }
+        const sortKey = computeSortKeyBetween(
+          { sort_key: srcSortKey } as PlanItem,
+          { sort_key: dstSortKey } as PlanItem,
+        );
+
         const aiData: SameDayTransportData = {
           same_day_pair: `${srcItem.id}->${dstItem.id}`,
           mode: option.mode,
@@ -93,7 +129,7 @@ export function useSameDayTransportInsert({
           // between them on refresh. (sort_order, the legacy integer, is
           // auto-assigned by the backend and only matters as a fallback when
           // sort_key is null.)
-          sort_key: computeSortKeyBetween(srcItem, dstItem),
+          sort_key: sortKey,
           ai_data: aiData,
         };
         await addItem(dayId, payload);
@@ -105,7 +141,7 @@ export function useSameDayTransportInsert({
         });
       }
     },
-    [addItem],
+    [addItem, doc],
   );
 
   return { addingKeys, addMode };

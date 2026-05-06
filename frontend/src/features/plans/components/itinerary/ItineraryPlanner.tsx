@@ -19,8 +19,8 @@ import { Map as MapIcon, Train } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer";
-import { type DestinationResponse, type Plan, type PlanDay, type PlanItem } from "@/lib/api";
-import { usePlanItinerary } from "@/features/plans/hooks/usePlanItinerary";
+import { type DestinationResponse, type Plan, type PlanItem, type PlanRole } from "@/lib/api";
+import { type UsePlanItineraryReturn } from "@/features/plans/hooks/usePlanItinerary";
 import { useSameDayTransportInsert } from "@/features/plans/hooks/useSameDayTransportInsert";
 import { useCrossCityTransport } from "@/features/plans/hooks/useCrossCityTransport";
 import { useHotels } from "@/features/plans/hooks/useHotels";
@@ -37,11 +37,12 @@ import StaysStrip from "@/features/plans/components/hotels/StaysStrip";
 
 interface Props {
   plan: Plan;
-  initialDays: PlanDay[];
   destinations: DestinationResponse[];
+  role: PlanRole;
+  itinerary: UsePlanItineraryReturn;
 }
 
-export default function ItineraryPlanner({ plan, initialDays, destinations }: Props) {
+export default function ItineraryPlanner({ plan, destinations, role, itinerary }: Props) {
   const {
     days,
     removeDay,
@@ -51,21 +52,28 @@ export default function ItineraryPlanner({ plan, initialDays, destinations }: Pr
     reorderItems,
     updateDayNotes,
     isLoading,
-  } = usePlanItinerary({ planId: plan.id, initialDays });
+    doc,
+  } = itinerary;
 
-  const [activeDayId, setActiveDayId] = useState<string>(initialDays[0]?.id ?? "");
+  const isViewer = role === "viewer";
+
+  const [activeDayId, setActiveDayId] = useState<string>(days[0]?.id ?? "");
   const [isBookStayOpen, setIsBookStayOpen] = useState(false);
   const [editingHotelId, setEditingHotelId] = useState<string | null>(null);
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
   const [isMapDrawerOpen, setIsMapDrawerOpen] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
 
-  const sameDayTransport = useSameDayTransportInsert({ addItem });
+  const sameDayTransport = useSameDayTransportInsert({ addItem, doc });
   const crossCityTransportHook = useCrossCityTransport({ planId: plan.id });
   const hotels = useHotels(plan.id);
 
+  // Viewers get an unreachable activation distance so drag-drop never fires.
+  // Server-side Yjs `readOnly` is the canonical enforcement; this is just UI.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: isViewer ? Number.POSITIVE_INFINITY : 8 },
+    }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
