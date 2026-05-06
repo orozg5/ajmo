@@ -8,11 +8,17 @@ import type { PlanItem, PlanRole } from "@/lib/api";
 
 import { createPlanProvider } from "./provider";
 import {
+  COMMENT_FIELDS,
   ITEM_FIELDS,
   PLAN_META_FIELDS,
+  ROOT_COMMENTS,
   ROOT_DAY_NOTES,
   ROOT_ITEMS,
+  ROOT_LIKES,
   ROOT_PLAN_META,
+  ROOT_RATINGS,
+  type AwarenessState,
+  type CommentField,
   type PlanMetaField,
   type PlanMetaPatch,
 } from "./schema";
@@ -261,6 +267,274 @@ export function useYPlanMeta(doc: Y.Doc | null): PlanMetaPatch {
     }
     return cache.current.value;
   }, [doc]);
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+// ── Likes ────────────────────────────────────────────────────────────────────
+
+export interface LikeSummary {
+  count: number;
+  userIds: string[];
+  mine: boolean;
+}
+
+interface LikesCache {
+  doc: Y.Doc | null;
+  key: string;
+  value: Map<string, LikeSummary>;
+}
+
+const EMPTY_LIKES: Map<string, LikeSummary> = new Map();
+
+/** Subscribe to the likes root. Returns a Map keyed by item_id with counts +
+ * the current user's like state. */
+export function useYAllLikes(
+  doc: Y.Doc | null,
+  currentUserId: string | null,
+): Map<string, LikeSummary> {
+  const cache = useRef<LikesCache>({ doc: null, key: "", value: EMPTY_LIKES });
+
+  const subscribe = useCallback(
+    (callback: () => void) => {
+      if (!doc) return () => {};
+      const root = doc.getMap(ROOT_LIKES);
+      const handler = () => callback();
+      root.observeDeep(handler);
+      return () => root.unobserveDeep(handler);
+    },
+    [doc],
+  );
+
+  const getSnapshot = useCallback((): Map<string, LikeSummary> => {
+    if (cache.current.doc !== doc) {
+      cache.current = { doc, key: "", value: EMPTY_LIKES };
+    }
+    if (!doc) return cache.current.value;
+    const root = doc.getMap(ROOT_LIKES) as Y.Map<Y.Map<boolean>>;
+    const out = new Map<string, LikeSummary>();
+    const fingerprintParts: string[] = [];
+    for (const itemId of Array.from(root.keys())) {
+      const inner = root.get(itemId);
+      if (!inner) continue;
+      const userIds = Array.from(inner.keys()).sort();
+      if (userIds.length === 0) continue;
+      const mine = currentUserId != null && inner.has(currentUserId);
+      out.set(itemId, { count: userIds.length, userIds, mine });
+      fingerprintParts.push(`${itemId}:${userIds.join(",")}`);
+    }
+    const fingerprint = `${currentUserId ?? ""}|${fingerprintParts.sort().join("|")}`;
+    if (fingerprint !== cache.current.key) {
+      cache.current = { doc, key: fingerprint, value: out };
+    }
+    return cache.current.value;
+  }, [doc, currentUserId]);
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+// ── Ratings ──────────────────────────────────────────────────────────────────
+
+export interface RatingSummary {
+  avg: number;
+  count: number;
+  mine: number | null;
+}
+
+interface RatingsCache {
+  doc: Y.Doc | null;
+  key: string;
+  value: Map<string, RatingSummary>;
+}
+
+const EMPTY_RATINGS: Map<string, RatingSummary> = new Map();
+
+export function useYAllRatings(
+  doc: Y.Doc | null,
+  currentUserId: string | null,
+): Map<string, RatingSummary> {
+  const cache = useRef<RatingsCache>({ doc: null, key: "", value: EMPTY_RATINGS });
+
+  const subscribe = useCallback(
+    (callback: () => void) => {
+      if (!doc) return () => {};
+      const root = doc.getMap(ROOT_RATINGS);
+      const handler = () => callback();
+      root.observeDeep(handler);
+      return () => root.unobserveDeep(handler);
+    },
+    [doc],
+  );
+
+  const getSnapshot = useCallback((): Map<string, RatingSummary> => {
+    if (cache.current.doc !== doc) {
+      cache.current = { doc, key: "", value: EMPTY_RATINGS };
+    }
+    if (!doc) return cache.current.value;
+    const root = doc.getMap(ROOT_RATINGS) as Y.Map<Y.Map<number>>;
+    const out = new Map<string, RatingSummary>();
+    const fingerprintParts: string[] = [];
+    for (const itemId of Array.from(root.keys())) {
+      const inner = root.get(itemId);
+      if (!inner) continue;
+      let sum = 0;
+      let count = 0;
+      let mine: number | null = null;
+      const partsForItem: string[] = [];
+      for (const userId of Array.from(inner.keys())) {
+        const stars = inner.get(userId);
+        if (typeof stars !== "number") continue;
+        sum += stars;
+        count += 1;
+        if (currentUserId && userId === currentUserId) mine = stars;
+        partsForItem.push(`${userId}=${stars}`);
+      }
+      if (count === 0) continue;
+      out.set(itemId, { avg: sum / count, count, mine });
+      fingerprintParts.push(`${itemId}:${partsForItem.sort().join(",")}`);
+    }
+    const fingerprint = `${currentUserId ?? ""}|${fingerprintParts.sort().join("|")}`;
+    if (fingerprint !== cache.current.key) {
+      cache.current = { doc, key: fingerprint, value: out };
+    }
+    return cache.current.value;
+  }, [doc, currentUserId]);
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+// ── Comments ─────────────────────────────────────────────────────────────────
+
+export interface CommentSnapshot {
+  id: string;
+  plan_item_id: string | null;
+  parent_id: string | null;
+  author_id: string | null;
+  body: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+function snapshotComment(map: Y.Map<unknown>): CommentSnapshot {
+  const out: Record<string, unknown> = {};
+  for (const field of COMMENT_FIELDS as readonly CommentField[]) {
+    out[field] = map.get(field) ?? null;
+  }
+  // body is not nullable in DB; coerce explicitly.
+  if (typeof out.body !== "string") out.body = "";
+  return out as unknown as CommentSnapshot;
+}
+
+interface CommentsCache {
+  doc: Y.Doc | null;
+  key: string;
+  value: CommentSnapshot[];
+}
+
+const EMPTY_COMMENTS: CommentSnapshot[] = [];
+
+export function useYComments(doc: Y.Doc | null): CommentSnapshot[] {
+  const cache = useRef<CommentsCache>({ doc: null, key: "", value: EMPTY_COMMENTS });
+
+  const subscribe = useCallback(
+    (callback: () => void) => {
+      if (!doc) return () => {};
+      const root = doc.getArray(ROOT_COMMENTS);
+      const handler = () => callback();
+      root.observeDeep(handler);
+      return () => root.unobserveDeep(handler);
+    },
+    [doc],
+  );
+
+  const getSnapshot = useCallback((): CommentSnapshot[] => {
+    if (cache.current.doc !== doc) {
+      cache.current = { doc, key: "", value: EMPTY_COMMENTS };
+    }
+    if (!doc) return cache.current.value;
+    const root = doc.getArray(ROOT_COMMENTS) as Y.Array<Y.Map<unknown>>;
+    const snapshots: CommentSnapshot[] = [];
+    for (let index = 0; index < root.length; index += 1) {
+      const map = root.get(index);
+      if (!map) continue;
+      snapshots.push(snapshotComment(map));
+    }
+    snapshots.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const fingerprint = snapshots
+      .map(
+        (entry) =>
+          `${entry.id}:${entry.parent_id ?? ""}:${entry.body}:${entry.deleted_at ?? ""}:${entry.updated_at}`,
+      )
+      .join("|");
+    if (fingerprint !== cache.current.key) {
+      cache.current = { doc, key: fingerprint, value: snapshots };
+    }
+    return cache.current.value;
+  }, [doc]);
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+// ── Awareness (presence + typing) ───────────────────────────────────────────
+
+export interface RemoteAwarenessEntry extends AwarenessState {
+  clientId: number;
+}
+
+interface AwarenessCache {
+  provider: HocuspocusProvider | null;
+  key: string;
+  value: RemoteAwarenessEntry[];
+}
+
+const EMPTY_AWARENESS: RemoteAwarenessEntry[] = [];
+
+/** Subscribe to the provider's awareness channel. Returns the list of remote
+ * client states (excluding our own). Fingerprinting on user/focus/typing only
+ * keeps useSyncExternalStore from rerendering on every awareness ping. */
+export function useRemoteAwareness(
+  provider: HocuspocusProvider | null,
+): RemoteAwarenessEntry[] {
+  const cache = useRef<AwarenessCache>({ provider: null, key: "", value: EMPTY_AWARENESS });
+
+  const subscribe = useCallback(
+    (callback: () => void) => {
+      if (!provider) return () => {};
+      const handler = () => callback();
+      provider.awareness?.on("change", handler);
+      return () => {
+        provider.awareness?.off("change", handler);
+      };
+    },
+    [provider],
+  );
+
+  const getSnapshot = useCallback((): RemoteAwarenessEntry[] => {
+    if (cache.current.provider !== provider) {
+      cache.current = { provider, key: "", value: EMPTY_AWARENESS };
+    }
+    if (!provider?.awareness) return cache.current.value;
+    const localId = provider.awareness.clientID;
+    const states = provider.awareness.getStates() as Map<number, AwarenessState | undefined>;
+    const out: RemoteAwarenessEntry[] = [];
+    for (const [clientId, state] of states) {
+      if (clientId === localId) continue;
+      if (!state || !state.user || !state.user.id) continue;
+      out.push({ clientId, ...state });
+    }
+    out.sort((a, b) => a.clientId - b.clientId);
+    const fingerprint = out
+      .map(
+        (entry) =>
+          `${entry.clientId}:${entry.user.id}:${entry.editing ? `${entry.editing.kind}:${entry.editing.id}` : ""}`,
+      )
+      .join("|");
+    if (fingerprint !== cache.current.key) {
+      cache.current = { provider, key: fingerprint, value: out };
+    }
+    return cache.current.value;
+  }, [provider]);
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

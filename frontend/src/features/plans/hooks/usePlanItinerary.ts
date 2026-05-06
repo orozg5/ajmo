@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { HocuspocusProvider } from "@hocuspocus/provider";
 import type * as Y from "yjs";
 
 import {
@@ -51,6 +52,9 @@ export interface UsePlanItineraryReturn {
    * need to read or write Yjs state directly (e.g. plan-meta broadcast)
    * should guard on null. */
   doc: Y.Doc | null;
+  /** The Hocuspocus provider — exposed so the awareness layer can publish
+   * presence + typing state. Null until the websocket session is up. */
+  provider: HocuspocusProvider | null;
 }
 
 type DaysCache = PlanDay[];
@@ -107,7 +111,7 @@ export function usePlanItinerary({
     };
   }, [planId]);
 
-  const { doc, status: connectionStatus, isSynced } = useYDoc({
+  const { doc, provider, status: connectionStatus, isSynced } = useYDoc({
     planId,
     token,
     initialRole: role,
@@ -236,5 +240,6 @@ export function usePlanItinerary({
     role,
     connectionStatus,
     doc,
+    provider,
   };
 }

@@ -2,7 +2,49 @@
 
 One entry per non-obvious decision. Date in ISO format. Update when reversed.
 
-## 2026-05-06 — Yjs schema scoped to items + day notes
+## 2026-05-06 — Likes, ratings, comments move into Yjs (overrides earlier Realtime ADR + earlier Yjs-scope ADR)
+
+**Context.** The first attempt put likes/ratings/comments on Supabase Realtime (`postgres_changes` with activity-channel piggy-back for the FK-only tables). User feedback after testing: "they are so slow and the other user needs to refresh… as i said, has to be realtime like the notes." The latency floor on Supabase Realtime is several hundred ms per round-trip; the user wants the sub-100ms feel they already get from Yjs on items + day_notes. They also asked for awareness (presence avatars on the focused item, typing indicators in the comments sheet) — Hocuspocus already exposes Y.Awareness, which is the natural carrier for that.
+
+**Decision.** Likes, ratings, and comments now live in the same `Y.Doc` that already drives items + day_notes. Three new top-level keys:
+- `likes:    Y.Map<itemId, Y.Map<userId, true>>` — presence of the inner key means liked.
+- `ratings:  Y.Map<itemId, Y.Map<userId, number>>` — 1..5.
+- `comments: Y.Array<Y.Map>` — flat list, threaded by `parent_id`, soft-deleted via `deleted_at`.
+
+`useYAllLikes`, `useYAllRatings`, `useYComments` hooks observe each root and feed the `ItemLike`, `ItemRating`, `CommentsSheet` components. Mutations (`toggleLike`, `setRating`, `clearRating`, `postComment`, `editComment`, `deleteComment`) live in `lib/yjs/mutations.ts`. The Hocuspocus materializer (`backend/app/services/collab/materializer.py`) reconciles each new key against `plan_item_reactions` (kind='like'), `plan_item_ratings`, and `plan_comments` on idle. The seed (`backend/app/services/collab/seed.py`) populates the doc from those tables on cold load.
+
+**Awareness/presence.** The Hocuspocus provider's `awareness` channel carries `{user, editing}`, where `editing` is either `null` or `{kind, id}` with `kind ∈ {"day_notes", "item_notes", "chat", "item_comment"}`. `AwarenessPublisher` mounts at the plan workspace level and sets the user identity once. `useEditingReporter(kind, id)` is wired to the focus/blur handlers of every free-text surface (day-notes textarea, item-notes textarea, chat composer, per-item-comment composer). `EditingPresence({kind, id})` filters `useRemoteAwareness` to entries matching that pair and renders an avatar pill — so peers see "X is editing this notes field" only when X actually has focus on it. `PresenceStrip` in `PlanHeader` is the global, connection-level indicator (everyone connected, regardless of focus).
+
+**Hover-presence was tried first and dropped** (UX feedback 2026-05-06): the original implementation reported `focusedItemId` from every ItemCard's onMouseEnter/onFocus, which meant moving the cursor across a list of items spammed presence dots on every card. Restricting to free-text editing keeps the signal meaningful — "X is touching this thing" — without polluting passive viewing.
+
+**Supabase Realtime is no longer used.** The `usePlanActivity` hook is now a plain react-query GET (no `postgres_changes` channel). The `supabase_realtime` publication block in `supabase/schema.sql` is intentionally empty. The activity feed surface is REST-only — it loads when its sheet opens and refetches on focus.
+
+**Rejected.**
+- Keep Supabase Realtime, ask user to flip the publication toggle. The publication problem was real (without it the broadcast doesn't fire), but the user's explicit request was Yjs-grade live, and they wanted awareness/typing/presence regardless. Going halfway would have shipped two broadcast systems for one feature surface.
+- Yjs for likes/ratings only, comments stay on Realtime. Splits the channel; doubles the failure modes; CommentsSheet would need both subscription paths. Not worth it.
+- Items-only-in-Yjs + a separate "social" Y.Doc per plan. Two providers per plan = two websockets, two materializers, no shared awareness. Single-doc multi-key is simpler.
+
+**Tripwires.**
+- The materializer is now the source of truth for `plan_item_reactions WHERE kind='like'`, `plan_item_ratings`, and `plan_comments` for any plan with a non-null `yjs_state`. Anything that writes those tables outside the materializer (e.g. the existing REST routes for comments/reactions/ratings) will be silently overwritten on the next idle flush. Treat those REST endpoints as backend-test only — don't call them from product code.
+- Y.Doc state grows with every comment. There's no soft-delete-then-purge step today; deleted comments stay in the doc with `deleted_at` set. If the doc starts costing real bandwidth on cold load, add a periodic backend job that strips deleted comments older than N days and rewrites `plans.yjs_state`.
+- Awareness state is ephemeral and not persisted. If a user disconnects, their presence vanishes; the `clientId`-keyed awareness Map handles ghosting cleanly. Don't try to persist awareness — that's what the Y.Doc proper is for.
+- `postComment` generates the comment id client-side. If two clients somehow generate the same UUID (~zero probability), the materializer's upsert-by-id treats them as one row — last-write-wins. Acceptable.
+
+**Relationship to other ADRs.**
+- *Supersedes* the "Social Realtime" ADR below (whole approach replaced).
+- *Extends* the "Yjs schema scoped to items + day notes" ADR below — that ADR's conservative bias still holds for hotels/destinations/`plan_days` lifecycle (still REST), but the Y.Doc now also carries likes/ratings/comments.
+
+## 2026-05-06 (superseded) — Social Realtime: comments + activity stream directly, reactions/ratings ride the activity channel
+
+**Status.** Superseded by the Yjs-for-social ADR above on the same day. Original text retained for context.
+
+**Context.** Comments, reactions, ratings, and the activity feed all need to feel live across collaborators. Phase-5 spec called for Supabase Realtime on `plan_comments`. `plan_comments` and `plan_activity` carry a `plan_id` column, so a `postgres_changes` filter (`plan_id=eq.{id}`) is server-side and efficient. `plan_item_reactions` and `plan_item_ratings` are scoped through `plan_item_id` only — there is no `plan_id` on those rows — so a server-side filter would either subscribe globally (wasteful) or require a schema change to denormalize `plan_id`.
+
+**Decision.** One Supabase Realtime channel per open plan, owned by `usePlanActivity`. It binds two `postgres_changes` listeners: comments (INSERT/UPDATE/DELETE filtered by `plan_id`) and activity (INSERT filtered by `plan_id`). Every reaction and rating write inserts a `plan_activity` row, so the activity-INSERT handler invalidates the reactions/ratings react-query caches and they refetch. Reactions and ratings stay live without their own subscription. Comments and activity share the same channel object — single websocket per open plan. The `supabase_realtime` publication is updated in `supabase/schema.sql` to include both tables. RLS on the underlying tables auto-scopes subscriptions to plan members.
+
+**Why superseded.** User feedback: too slow + needed publication toggle they didn't notice + they wanted Yjs-grade live + awareness/typing/presence on top.
+
+## 2026-05-06 — Yjs schema: items + day_notes (extended later same day for likes/ratings/comments)
 
 **Context.** Phase-6 brought up the question of how much of the plan to model in the Y.Doc. The original phase plan listed destinations, days, items, hotels, and destination_days — five tables to keep mirrored. That ballooned the materializer's reconciliation surface and tied owner-only operations (date-range changes via `EditPlanDialog`, destination CRUD, hotel-with-place-join queries) to CRDT plumbing.
 

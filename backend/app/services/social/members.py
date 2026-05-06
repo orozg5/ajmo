@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 from app.db import get_supabase_client
+from app.services.social.activity import safe_record_activity
 from app.services.users.search import get_profile_summary
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,12 @@ async def update_member_role(
     )
     if not fetched.data:
         raise ValueError("Member not found")
+    await safe_record_activity(
+        plan_id,
+        current_user,
+        "member_role_changed",
+        {"user_id": target_user_id, "role": role},
+    )
     return fetched.data[0]
 
 
@@ -180,6 +187,12 @@ async def remove_member(plan_id: str, current_user: str, target_user_id: str) ->
     )
     if not result.data:
         raise ValueError("Member not found")
+    await safe_record_activity(
+        plan_id,
+        current_user,
+        "member_removed",
+        {"user_id": target_user_id},
+    )
 
 
 async def upsert_member(plan_id: str, user_id: str, role: str) -> str:
@@ -259,4 +272,10 @@ async def add_member_by_owner(
     )
     if not fetched.data:
         raise ValueError("Failed to fetch member after upsert")
+    await safe_record_activity(
+        plan_id,
+        current_user,
+        "member_added",
+        {"user_id": target_user_id, "role": role},
+    )
     return fetched.data[0]

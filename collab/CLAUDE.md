@@ -44,4 +44,4 @@ collab/
 ## Phase notes
 
 - **Phase 0**: scaffold only — package.json, tsconfig, placeholder index.ts.
-- **Phase 6 (shipped 2026-05-06)**: full Hocuspocus wiring, `@hocuspocus/extension-database` + `@hocuspocus/extension-logger`, shared-secret auth dance against FastAPI, viewer `readOnly` gate, change-signal POST, cold-load seed fallback. Dockerfile and presence/awareness UI deferred — see `docs/phases/phase-6.md`.
+- **Phase 6 (shipped 2026-05-06)**: full Hocuspocus wiring, `@hocuspocus/extension-database` + `@hocuspocus/extension-logger`, shared-secret auth dance against FastAPI, viewer `readOnly` gate, change-signal POST, cold-load seed fallback. Awareness/presence shipped same day as part of the social pass (Phase 5) — Hocuspocus's built-in `awareness` channel carries `{user, editing: {kind, id} | null}`; the collab service itself needs no additional code for it (awareness rides the WebSocket alongside the doc updates). Dockerfile still deferred — see `docs/phases/phase-6.md`.

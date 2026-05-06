@@ -6,11 +6,15 @@ import * as Y from "yjs";
 import type { AddItemPayload, PlanItem, ReorderEntry } from "@/lib/api";
 
 import {
+  COMMENT_FIELDS,
   ITEM_FIELDS,
   PLAN_META_FIELDS,
+  ROOT_COMMENTS,
   ROOT_DAY_NOTES,
   ROOT_ITEMS,
+  ROOT_LIKES,
   ROOT_PLAN_META,
+  ROOT_RATINGS,
   type PlanMetaPatch,
 } from "./schema";
 
@@ -216,3 +220,137 @@ export function setPlanMeta(doc: Y.Doc, patch: PlanMetaPatch): void {
     }
   });
 }
+
+// ── Likes ────────────────────────────────────────────────────────────────────
+
+function getLikesRoot(doc: Y.Doc): Y.Map<Y.Map<boolean>> {
+  return doc.getMap(ROOT_LIKES) as Y.Map<Y.Map<boolean>>;
+}
+
+/** Toggle the current user's like on an item. Presence of a key in the inner
+ * map means liked; absent means not liked. We mutate inside a single
+ * transaction so peers see one atomic update. */
+export function toggleLike(doc: Y.Doc, itemId: string, userId: string): boolean {
+  let liked = false;
+  doc.transact(() => {
+    const root = getLikesRoot(doc);
+    let inner = root.get(itemId);
+    if (!inner) {
+      inner = new Y.Map<boolean>();
+      root.set(itemId, inner);
+    }
+    if (inner.has(userId)) {
+      inner.delete(userId);
+      liked = false;
+    } else {
+      inner.set(userId, true);
+      liked = true;
+    }
+  });
+  return liked;
+}
+
+// ── Ratings ──────────────────────────────────────────────────────────────────
+
+function getRatingsRoot(doc: Y.Doc): Y.Map<Y.Map<number>> {
+  return doc.getMap(ROOT_RATINGS) as Y.Map<Y.Map<number>>;
+}
+
+export function setRating(
+  doc: Y.Doc,
+  itemId: string,
+  userId: string,
+  stars: number,
+): void {
+  if (stars < 1 || stars > 5) return;
+  doc.transact(() => {
+    const root = getRatingsRoot(doc);
+    let inner = root.get(itemId);
+    if (!inner) {
+      inner = new Y.Map<number>();
+      root.set(itemId, inner);
+    }
+    inner.set(userId, stars);
+  });
+}
+
+export function clearRating(doc: Y.Doc, itemId: string, userId: string): void {
+  doc.transact(() => {
+    const root = getRatingsRoot(doc);
+    const inner = root.get(itemId);
+    if (!inner) return;
+    inner.delete(userId);
+  });
+}
+
+// ── Comments ─────────────────────────────────────────────────────────────────
+
+function getCommentsRoot(doc: Y.Doc): Y.Array<Y.Map<unknown>> {
+  return doc.getArray(ROOT_COMMENTS) as Y.Array<Y.Map<unknown>>;
+}
+
+function findComment(
+  doc: Y.Doc,
+  commentId: string,
+): { index: number; map: Y.Map<unknown> } | null {
+  const arr = getCommentsRoot(doc);
+  for (let index = 0; index < arr.length; index += 1) {
+    const map = arr.get(index);
+    if (map?.get("id") === commentId) return { index, map };
+  }
+  return null;
+}
+
+export interface PostCommentInput {
+  authorId: string;
+  body: string;
+  planItemId?: string | null;
+  parentId?: string | null;
+}
+
+/** Post a new comment. Generates a UUID client-side so the materializer can
+ * upsert by id without an extra round-trip. created_at/updated_at are set
+ * client-side too — clocks are imperfect but ordering is by created_at and
+ * peers display rows as they arrive, so a few hundred ms of skew is fine. */
+export function postComment(doc: Y.Doc, input: PostCommentInput): string {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  doc.transact(() => {
+    const map = new Y.Map<unknown>();
+    map.set("id", id);
+    map.set("plan_item_id", input.planItemId ?? null);
+    map.set("parent_id", input.parentId ?? null);
+    map.set("author_id", input.authorId);
+    map.set("body", input.body);
+    map.set("created_at", now);
+    map.set("updated_at", now);
+    map.set("deleted_at", null);
+    getCommentsRoot(doc).push([map]);
+  });
+  return id;
+}
+
+export function editComment(doc: Y.Doc, commentId: string, body: string): void {
+  doc.transact(() => {
+    const found = findComment(doc, commentId);
+    if (!found) return;
+    if (found.map.get("deleted_at") !== null) return;
+    found.map.set("body", body);
+    found.map.set("updated_at", new Date().toISOString());
+  });
+}
+
+/** Soft-delete: set deleted_at + clear body. Replies stay attached so the
+ * thread shape doesn't collapse. */
+export function deleteComment(doc: Y.Doc, commentId: string): void {
+  doc.transact(() => {
+    const found = findComment(doc, commentId);
+    if (!found) return;
+    if (found.map.get("deleted_at") !== null) return;
+    found.map.set("body", "");
+    found.map.set("deleted_at", new Date().toISOString());
+    found.map.set("updated_at", new Date().toISOString());
+  });
+}
+
+export { COMMENT_FIELDS };

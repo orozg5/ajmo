@@ -3,6 +3,10 @@ import { apiFetch } from "./client";
 export type PlanRole = "viewer" | "editor" | "owner";
 export type InvitableRole = Exclude<PlanRole, "owner">;
 export type FriendshipStatus = "pending" | "accepted" | "rejected";
+// We only surface "like" in the UI today. The DB enum still carries the
+// other historical values (dislike/love/bookmark) — they're harmless legacy,
+// no migration needed.
+export type ReactionKind = "like";
 
 export interface ProfileSummary {
   id: string;
@@ -143,3 +147,51 @@ export const acceptInvite = (
     { method: "POST" },
     accessToken,
   );
+
+// Comments / reactions / ratings live on Yjs now (see lib/yjs/*). The REST
+// endpoints still exist on the backend for the materializer's
+// reconciliation but the frontend doesn't call them — we read+write the
+// Y.Doc directly. If you find yourself reaching for a fetch wrapper for
+// these surfaces, you probably want a Y.Doc mutation instead.
+
+// ── Activity ────────────────────────────────────────────────────────────────
+
+export type ActivityKind =
+  | "plan_created"
+  | "member_added"
+  | "member_removed"
+  | "member_role_changed"
+  | "comment_posted"
+  | "reaction_added"
+  | "reaction_removed"
+  | "rating_set"
+  | "rating_cleared"
+  | (string & {});
+
+export interface PlanActivity {
+  id: string;
+  plan_id: string;
+  actor_id: string | null;
+  kind: ActivityKind;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+  actor: ProfileSummary | null;
+}
+
+export interface ListActivityOptions {
+  limit?: number;
+  before?: string | null;
+}
+
+export const listActivity = (
+  planId: string,
+  options: ListActivityOptions = {},
+): Promise<PlanActivity[]> => {
+  const params = new URLSearchParams();
+  if (options.limit != null) params.set("limit", String(options.limit));
+  if (options.before) params.set("before", options.before);
+  const qs = params.toString();
+  return apiFetch<PlanActivity[]>(
+    `/plans/${planId}/activity${qs ? `?${qs}` : ""}`,
+  );
+};

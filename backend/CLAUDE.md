@@ -44,7 +44,7 @@
   - `POST /internal/collab/authorize` — JWT → `(user_id, role)` resolution. Role comes from `services/social/members.py:get_role` (owner via `plans.owner_id`, otherwise `plan_members.role`).
   - `POST /internal/collab/changed` — debounce signal; calls `services/collab/materializer.py:schedule(plan_id)` to (re)start the per-plan idle timer.
   - `GET /internal/collab/seed?plan_id=…` — builds base64 `Y.Doc.get_update()` from `plan_items` + `plan_days.notes` (no hotels/destinations) on cold load when `plans.yjs_state IS NULL`.
-- Materializer lives in `app/services/collab/materializer.py`, per-plan `asyncio.Task` with `YJS_IDLE_MS` debounce (default 30s). On fire it decodes `yjs_state` with `pycrdt` and reconciles **only** `plan_items` (full upsert+delete scoped by `plan_id`) and `plan_days.notes` (UPDATE for day_ids already on the plan). Hotels, destinations, and the `plan_days` lifecycle stay REST-driven (ADR 2026-05-06).
+- Materializer lives in `app/services/collab/materializer.py`, per-plan `asyncio.Task` with `YJS_IDLE_MS` debounce (default 30s). On fire it decodes `yjs_state` with `pycrdt` and reconciles `plan_items` (full upsert+delete scoped by `plan_id`), `plan_days.notes` (UPDATE for day_ids already on the plan), `plan_item_reactions` filtered to `kind='like'` (insert/delete diff), `plan_item_ratings` (upsert + delete missing), and `plan_comments` (upsert by id; rows whose id disappears from the doc are deleted). Hotels, destinations, and the `plan_days` lifecycle stay REST-driven (ADR 2026-05-06 revised).
 - `plans.yjs_state` is a BYTEA blob; `services/plans/crud.py:strip_yjs_state` filters it out of any Pydantic-serialized HTTP response.
 
 ## AI / RAG — two-layer cache (unchanged from v1)
@@ -106,4 +106,4 @@ Volatile fields per item type (price_range, opening_hours, amenities, check_in_t
 | Storage signed URLs | `routes/storage.py` | `services/storage/signed.py` |
 | Collab internal (`/internal/collab/{authorize,changed,seed}`) | `routes/collab.py` | `services/collab/{authorize,seed,materializer,schema}.py` |
 
-**Deferred from Phase 5** (no service files yet, schema columns in place): comments, reactions, ratings, activity feed.
+**Phase 5 social**: comments, likes (only kind in product UI), ratings, and the activity feed all shipped 2026-05-06. Comments/likes/ratings live in the Y.Doc and are reconciled by the materializer; the REST endpoints in `routes/social.py` are kept as backend-only test surfaces. The activity feed is a regular REST resource backed by `services/social/activity.py:safe_record_activity` calls scattered across the writer services.

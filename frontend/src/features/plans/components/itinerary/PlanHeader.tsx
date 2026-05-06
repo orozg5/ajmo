@@ -5,15 +5,18 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { motion, useReducedMotion } from "framer-motion";
 import {
+  Activity,
   Calendar,
   MapPin,
+  MessagesSquare,
   Settings as SettingsIcon,
   Share2,
 } from "lucide-react";
+// MessagesSquare = group chat — fits the plan-wide "Chat" surface better
+// than MessageCircle (which we use for per-item comments on ItemCard).
 import { toast } from "sonner";
 import type * as Y from "yjs";
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -26,7 +29,10 @@ import { type DestinationResponse, type Plan, type PlanRole, updatePlan } from "
 import { setPlanMeta } from "@/lib/yjs/mutations";
 import { type PlanMetaPatch } from "@/lib/yjs/schema";
 import EditPlanDialog from "@/features/plans/components/itinerary/EditPlanDialog";
+import ActivitySheet from "@/features/social/components/ActivitySheet";
+import CommentsSheet from "@/features/social/components/CommentsSheet";
 import ShareDialog from "@/features/social/components/ShareDialog";
+import PresenceStrip from "@/features/plans/components/awareness/PresenceStrip";
 import { VISIBILITY_ICON, VISIBILITY_LABEL } from "@/features/plans/utils/visibility";
 
 type PlanHeaderProps = {
@@ -62,6 +68,8 @@ export default function PlanHeader({ plan, destinations, isOwner, role, doc, liv
   const [localTitle, setLocalTitle] = useState(plan.title);
   const [editPlanOpen, setEditPlanOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
   const canEdit = role === "owner" || role === "editor";
 
   useEffect(() => {
@@ -212,13 +220,7 @@ export default function PlanHeader({ plan, destinations, isOwner, role, doc, liv
             ) : null}
           </div>
 
-          <div className="flex -space-x-2">
-            <Avatar className="size-9 border-2 border-card">
-              <AvatarFallback className="bg-primary/10 text-xs font-semibold text-primary">
-                {isOwner ? "You" : "OW"}
-              </AvatarFallback>
-            </Avatar>
-          </div>
+          <PresenceStrip />
         </div>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-ink-subtle">
@@ -246,6 +248,24 @@ export default function PlanHeader({ plan, destinations, isOwner, role, doc, liv
           <Button size="sm" variant="outline" onClick={handleShare}>
             <Share2 className="size-4" strokeWidth={1.5} />
             Share
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setCommentsOpen(true)}
+            aria-label="Open chat"
+          >
+            <MessagesSquare className="size-4" strokeWidth={1.5} />
+            Chat
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setActivityOpen(true)}
+            aria-label="Open activity feed"
+          >
+            <Activity className="size-4" strokeWidth={1.5} />
+            Activity
           </Button>
           {canEdit ? (
             <Tooltip>
@@ -293,6 +313,19 @@ export default function PlanHeader({ plan, destinations, isOwner, role, doc, liv
         onOpenChange={setShareDialogOpen}
         planId={plan.id}
         isOwner={isOwner}
+      />
+
+      <CommentsSheet
+        open={commentsOpen}
+        onOpenChange={setCommentsOpen}
+        isPlanOwner={isOwner}
+        scopedItemId={null}
+      />
+
+      <ActivitySheet
+        open={activityOpen}
+        onOpenChange={setActivityOpen}
+        planId={plan.id}
       />
     </motion.section>
   );

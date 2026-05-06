@@ -39,7 +39,7 @@ src/
 
 ## State layering (strict)
 
-- **Yjs** (via `lib/yjs/`) — collaborative itinerary state while a plan is open (shipped Phase 6, 2026-05-06). Y.Doc holds `items` (per-day `Y.Array<Y.Map>`) and `day_notes` (`Y.Map<dayId, string>`) only — see `docs/COLLAB.md` and ADR 2026-05-06.
+- **Yjs** (via `lib/yjs/`) — collaborative itinerary state while a plan is open (shipped Phase 6, 2026-05-06). Y.Doc holds `items` (per-day `Y.Array<Y.Map>`), `day_notes` (`Y.Map<dayId, string>`), plus the social surfaces added 2026-05-06: `likes` (`Y.Map<itemId, Y.Map<userId, true>>`), `ratings` (`Y.Map<itemId, Y.Map<userId, number>>`), `comments` (`Y.Array<Y.Map>`). Awareness/presence (`focusedItemId`, `isTypingComment`, user profile chrome) rides on the Hocuspocus provider's `awareness` channel — see `lib/yjs/hooks.ts:useRemoteAwareness`, `features/plans/components/awareness/`, `docs/COLLAB.md`, and ADR 2026-05-06 (revised).
 - **Zustand** (`stores/`) — UI-only client state: theme, offline pill, queued-writes badge, toast store, modal open/close.
 - **React Query** (`@tanstack/react-query`) — server cache. Persists to IndexedDB for the queries tagged `{ persist: true }`.
 - **React Hook Form + Zod** — form state; schemas colocated with the form.
@@ -88,7 +88,9 @@ src/
 ## Hard constraints
 
 - Never put feature components in `components/ui/` — that folder is shadcn primitives only.
-- Never touch Yjs state outside `lib/yjs/` and `features/*/hooks/*` — components should never call `doc.transact(...)` directly. Mutations go through `lib/yjs/mutations.ts` (`addItem`, `removeItem`, `reorderItems`, `setDayNotes`, `updateItemNotes`, `clearDayContent`, `setPlanMeta`); reads go through the observer hooks in `lib/yjs/hooks.ts`.
-- Never extend the Y.Doc schema beyond `items` + `day_notes` without an ADR — ADR 2026-05-06 explicitly scopes Yjs to those two surfaces; hotels, destinations, and the `plan_days` lifecycle are REST-driven.
+- Never touch Yjs state outside `lib/yjs/` and `features/*/hooks/*` — components should never call `doc.transact(...)` directly. Mutations go through `lib/yjs/mutations.ts` (`addItem`, `removeItem`, `reorderItems`, `setDayNotes`, `updateItemNotes`, `clearDayContent`, `setPlanMeta`, `toggleLike`, `setRating`, `clearRating`, `postComment`, `editComment`, `deleteComment`); reads go through the observer hooks in `lib/yjs/hooks.ts` (`useYAllItems`, `useYAllDayNotes`, `useYPlanMeta`, `useYAllLikes`, `useYAllRatings`, `useYComments`, `useRemoteAwareness`).
+- Y.Doc roots: items, day_notes, plan_meta, likes, ratings, comments. Hotels, destinations, and the `plan_days` lifecycle stay REST-driven. Don't add another root without an ADR — see ADR 2026-05-06 (revised).
+- Awareness state (`{user, editing: {kind, id} | null}`) is ephemeral — published via `provider.awareness.setLocalState…` from `AwarenessPublisher` (user identity) and `useEditingReporter` (focus/blur on the four free-text surfaces: day notes, item notes, chat composer, per-item comment composer). `EditingPresence` filters remote awareness by `(kind, id)` and renders avatar pills next to the matching label. Never persist awareness; it's not part of the Y.Doc. Hover or idle viewing does NOT publish presence — see ADR 2026-05-06 for the design rationale.
+- Don't reach for `lib/api/social.ts` for likes/ratings/comments — those REST endpoints exist only as the materializer's reconciliation target. Frontend reads/writes go through Yjs.
 - Never persist raw query responses that contain an access token.
 - Never use the Next.js `pages/` router.

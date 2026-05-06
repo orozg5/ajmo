@@ -1,12 +1,16 @@
-"""Routes for friendships, plan members, plan invites, and the invite redeem endpoint.
+"""Routes for friendships, plan members, plan invites, comments, reactions,
+ratings, activity, and the invite redeem endpoint.
 
-Three routers are exported from this file because the URLs they own live under
-different prefixes:
+Routers exported from this file (different URL prefixes):
 
-- friends_router      → /social/...
-- plan_members_router → /plans/{plan_id}/members
-- plan_invites_router → /plans/{plan_id}/invites
-- invite_router       → /invite/{token}/accept
+- friends_router         → /social/...
+- plan_members_router    → /plans/{plan_id}/members
+- plan_invites_router    → /plans/{plan_id}/invites
+- plan_comments_router   → /plans/{plan_id}/comments
+- plan_reactions_router  → /plans/{plan_id}/reactions and /plans/{plan_id}/items/{item_id}/reactions
+- plan_ratings_router    → /plans/{plan_id}/ratings   and /plans/{plan_id}/items/{item_id}/rating
+- plan_activity_router   → /plans/{plan_id}/activity
+- invite_router          → /invite/{token}/accept
 """
 from __future__ import annotations
 
@@ -19,6 +23,10 @@ from pydantic import BaseModel
 
 from app.auth import get_current_user
 from app.schemas.social import (
+    ActivityResponse,
+    CommentCreate,
+    CommentResponse,
+    CommentUpdate,
     FriendRequestCreate,
     FriendshipResponse,
     InviteAcceptResponse,
@@ -28,6 +36,18 @@ from app.schemas.social import (
     PlanMemberResponse,
     PlanMemberUpdate,
     ProfileSummary,
+    RatingResponse,
+    RatingUpsert,
+    ReactionCreate,
+    ReactionKind,
+    ReactionResponse,
+)
+from app.services.social.activity import list_activity
+from app.services.social.comments import (
+    create_comment,
+    delete_comment,
+    list_comments,
+    update_comment,
 )
 from app.services.social.friends import (
     cancel_outgoing,
@@ -51,6 +71,16 @@ from app.services.social.members import (
     remove_member,
     update_member_role,
 )
+from app.services.social.ratings import (
+    delete_rating,
+    list_plan_ratings,
+    upsert_rating,
+)
+from app.services.social.reactions import (
+    add_reaction,
+    list_plan_reactions,
+    remove_reaction,
+)
 from app.services.users.search import search_profiles
 
 logger = logging.getLogger(__name__)
@@ -58,6 +88,10 @@ logger = logging.getLogger(__name__)
 friends_router = APIRouter(prefix="/social", tags=["social"])
 plan_members_router = APIRouter(prefix="/plans", tags=["social"])
 plan_invites_router = APIRouter(prefix="/plans", tags=["social"])
+plan_comments_router = APIRouter(prefix="/plans", tags=["social"])
+plan_reactions_router = APIRouter(prefix="/plans", tags=["social"])
+plan_ratings_router = APIRouter(prefix="/plans", tags=["social"])
+plan_activity_router = APIRouter(prefix="/plans", tags=["social"])
 invite_router = APIRouter(prefix="/invite", tags=["social"])
 
 
@@ -344,3 +378,217 @@ async def accept_invite_route(
     except Exception:
         logger.exception("Failed to accept invite %s", token)
         raise HTTPException(status_code=500, detail="Failed to accept invite")
+
+
+# ── Plan comments ────────────────────────────────────────────────────────────
+
+
+@plan_comments_router.get("/{plan_id}/comments")
+async def list_comments_route(
+    plan_id: str,
+    plan_item_id: str | None = Query(None),
+    current_user: str = Depends(get_current_user),
+) -> list[CommentResponse]:
+    try:
+        return await list_comments(plan_id, current_user, plan_item_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to list comments for plan %s", plan_id)
+        raise HTTPException(status_code=500, detail="Failed to list comments")
+
+
+@plan_comments_router.post("/{plan_id}/comments", status_code=201)
+async def create_comment_route(
+    plan_id: str,
+    body: CommentCreate,
+    current_user: str = Depends(get_current_user),
+) -> CommentResponse:
+    try:
+        return await create_comment(
+            plan_id,
+            current_user,
+            body.body,
+            body.plan_item_id,
+            body.parent_id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to create comment on plan %s", plan_id)
+        raise HTTPException(status_code=500, detail="Failed to create comment")
+
+
+@plan_comments_router.patch("/{plan_id}/comments/{comment_id}")
+async def update_comment_route(
+    plan_id: str,
+    comment_id: str,
+    body: CommentUpdate,
+    current_user: str = Depends(get_current_user),
+) -> CommentResponse:
+    try:
+        return await update_comment(plan_id, current_user, comment_id, body.body)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to update comment %s on plan %s", comment_id, plan_id)
+        raise HTTPException(status_code=500, detail="Failed to update comment")
+
+
+@plan_comments_router.delete("/{plan_id}/comments/{comment_id}", status_code=204)
+async def delete_comment_route(
+    plan_id: str,
+    comment_id: str,
+    current_user: str = Depends(get_current_user),
+) -> Response:
+    try:
+        await delete_comment(plan_id, current_user, comment_id)
+        return Response(status_code=204)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to delete comment %s on plan %s", comment_id, plan_id)
+        raise HTTPException(status_code=500, detail="Failed to delete comment")
+
+
+# ── Plan-item reactions ──────────────────────────────────────────────────────
+
+
+@plan_reactions_router.get("/{plan_id}/reactions")
+async def list_reactions_route(
+    plan_id: str,
+    current_user: str = Depends(get_current_user),
+) -> list[ReactionResponse]:
+    try:
+        return await list_plan_reactions(plan_id, current_user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to list reactions for plan %s", plan_id)
+        raise HTTPException(status_code=500, detail="Failed to list reactions")
+
+
+@plan_reactions_router.post(
+    "/{plan_id}/items/{item_id}/reactions", status_code=201
+)
+async def add_reaction_route(
+    plan_id: str,
+    item_id: str,
+    body: ReactionCreate,
+    current_user: str = Depends(get_current_user),
+) -> ReactionResponse:
+    try:
+        return await add_reaction(plan_id, current_user, item_id, body.kind)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to add reaction on item %s in plan %s", item_id, plan_id)
+        raise HTTPException(status_code=500, detail="Failed to add reaction")
+
+
+@plan_reactions_router.delete(
+    "/{plan_id}/items/{item_id}/reactions/{kind}", status_code=204
+)
+async def remove_reaction_route(
+    plan_id: str,
+    item_id: str,
+    kind: ReactionKind,
+    current_user: str = Depends(get_current_user),
+) -> Response:
+    try:
+        await remove_reaction(plan_id, current_user, item_id, kind)
+        return Response(status_code=204)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception:
+        logger.exception(
+            "Failed to remove reaction %s on item %s in plan %s", kind, item_id, plan_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to remove reaction")
+
+
+# ── Plan-item ratings ────────────────────────────────────────────────────────
+
+
+@plan_ratings_router.get("/{plan_id}/ratings")
+async def list_ratings_route(
+    plan_id: str,
+    current_user: str = Depends(get_current_user),
+) -> list[RatingResponse]:
+    try:
+        return await list_plan_ratings(plan_id, current_user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to list ratings for plan %s", plan_id)
+        raise HTTPException(status_code=500, detail="Failed to list ratings")
+
+
+@plan_ratings_router.put("/{plan_id}/items/{item_id}/rating")
+async def upsert_rating_route(
+    plan_id: str,
+    item_id: str,
+    body: RatingUpsert,
+    current_user: str = Depends(get_current_user),
+) -> RatingResponse:
+    try:
+        return await upsert_rating(plan_id, current_user, item_id, body.stars)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to set rating on item %s in plan %s", item_id, plan_id)
+        raise HTTPException(status_code=500, detail="Failed to set rating")
+
+
+@plan_ratings_router.delete(
+    "/{plan_id}/items/{item_id}/rating", status_code=204
+)
+async def delete_rating_route(
+    plan_id: str,
+    item_id: str,
+    current_user: str = Depends(get_current_user),
+) -> Response:
+    try:
+        await delete_rating(plan_id, current_user, item_id)
+        return Response(status_code=204)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to delete rating on item %s in plan %s", item_id, plan_id)
+        raise HTTPException(status_code=500, detail="Failed to delete rating")
+
+
+# ── Plan activity feed ───────────────────────────────────────────────────────
+
+
+@plan_activity_router.get("/{plan_id}/activity")
+async def list_activity_route(
+    plan_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    before: str | None = Query(None),
+    current_user: str = Depends(get_current_user),
+) -> list[ActivityResponse]:
+    role = await get_role(plan_id, current_user)
+    if role is None:
+        raise HTTPException(status_code=403, detail="Not a member of this plan")
+    try:
+        return await list_activity(plan_id, limit=limit, before=before)
+    except Exception:
+        logger.exception("Failed to list activity for plan %s", plan_id)
+        raise HTTPException(status_code=500, detail="Failed to list activity")

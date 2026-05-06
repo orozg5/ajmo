@@ -509,3 +509,11 @@ create policy "owner write user-avatars" on storage.objects
     bucket_id = 'user-avatars'
     and auth.uid()::text = (storage.foldername(name))[1]
   );
+
+-- Realtime publication -------------------------------------------------------
+-- Intentionally empty. Live collab traffic flows through Hocuspocus/Yjs
+-- (items, day_notes, likes, ratings, comments — see docs/COLLAB.md and
+-- ADR 2026-05-06 revised). Supabase Realtime is not used for any social
+-- surface today. If a future feature needs `postgres_changes` (e.g.
+-- notification fan-out from a backend write), add `alter publication
+-- supabase_realtime add table <name>;` here.

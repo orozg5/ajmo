@@ -58,7 +58,7 @@ AI enriches plan items with live data (description, price, hours) using RAG via 
 - Never use the Next.js `pages/` router.
 - Never modify `places` records from the frontend — backend only.
 - Never write to `yjs_state` directly — only Hocuspocus (via `@hocuspocus/extension-database`) writes it. FastAPI may only read it (materializer + `/internal/collab/seed`).
-- Never extend the Y.Doc schema beyond `items` + `day_notes` without an ADR — hotels, destinations, and `plan_days` lifecycle stay REST-driven (ADR 2026-05-06).
+- Y.Doc schema is `items + day_notes + likes + ratings + comments` (plus the `plan_meta` broadcast mirror). Hotels, destinations, and `plan_days` lifecycle stay REST-driven. Don't add another root key without an ADR — see ADR 2026-05-06 (revised: "Likes, ratings, comments move into Yjs").
 - Never hand-parse LLM output — always use `.with_structured_output(PydanticModel)` in backend AI services.
 - Never hardcode env var defaults in `backend/app/config.py` — every AI-related env var must be required and documented in `.env.example`.
 - Never use underscore prefixes on any name, including "private" helpers.

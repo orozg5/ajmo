@@ -3,7 +3,13 @@
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
 
-import { ROOT_DAY_NOTES, ROOT_ITEMS } from "./schema";
+import {
+  ROOT_COMMENTS,
+  ROOT_DAY_NOTES,
+  ROOT_ITEMS,
+  ROOT_LIKES,
+  ROOT_RATINGS,
+} from "./schema";
 
 export interface CreateProviderOptions {
   planId: string;
@@ -23,6 +29,9 @@ const COLLAB_URL = process.env.NEXT_PUBLIC_COLLAB_URL ?? "ws://localhost:1234";
 function ensureRoots(doc: Y.Doc): void {
   doc.getMap(ROOT_ITEMS);
   doc.getMap(ROOT_DAY_NOTES);
+  doc.getMap(ROOT_LIKES);
+  doc.getMap(ROOT_RATINGS);
+  doc.getArray(ROOT_COMMENTS);
 }
 
 export function createPlanProvider({

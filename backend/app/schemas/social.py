@@ -1,13 +1,15 @@
-"""Pydantic models for social endpoints — friends, plan members, invites."""
+"""Pydantic models for social endpoints — friends, plan members, invites,
+comments, reactions, ratings, activity."""
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 PlanRole = Literal["viewer", "editor", "owner"]
 InvitableRole = Literal["viewer", "editor"]
 FriendshipStatus = Literal["pending", "accepted", "rejected"]
+ReactionKind = Literal["like", "dislike", "love", "bookmark"]
 
 
 class ProfileSummary(BaseModel):
@@ -79,3 +81,71 @@ class PlanInviteCreate(BaseModel):
 class InviteAcceptResponse(BaseModel):
     plan_id: str
     role: PlanRole
+
+
+# ── Comments ─────────────────────────────────────────────────────────────────
+
+
+class CommentResponse(BaseModel):
+    id: str
+    plan_id: str
+    plan_item_id: str | None = None
+    parent_id: str | None = None
+    author_id: str | None = None
+    body: str
+    created_at: str
+    updated_at: str
+    deleted_at: str | None = None
+    author: ProfileSummary | None = None
+
+
+class CommentCreate(BaseModel):
+    body: str = Field(..., min_length=1, max_length=4000)
+    plan_item_id: str | None = None
+    parent_id: str | None = None
+
+
+class CommentUpdate(BaseModel):
+    body: str = Field(..., min_length=1, max_length=4000)
+
+
+# ── Reactions ────────────────────────────────────────────────────────────────
+
+
+class ReactionResponse(BaseModel):
+    plan_item_id: str
+    user_id: str
+    kind: ReactionKind
+    created_at: str
+
+
+class ReactionCreate(BaseModel):
+    kind: ReactionKind
+
+
+# ── Ratings ──────────────────────────────────────────────────────────────────
+
+
+class RatingResponse(BaseModel):
+    plan_item_id: str
+    user_id: str
+    stars: int = Field(..., ge=1, le=5)
+    created_at: str
+    updated_at: str
+
+
+class RatingUpsert(BaseModel):
+    stars: int = Field(..., ge=1, le=5)
+
+
+# ── Activity ─────────────────────────────────────────────────────────────────
+
+
+class ActivityResponse(BaseModel):
+    id: str
+    plan_id: str
+    actor_id: str | None = None
+    kind: str
+    payload: dict[str, Any] | None = None
+    created_at: str
+    actor: ProfileSummary | None = None

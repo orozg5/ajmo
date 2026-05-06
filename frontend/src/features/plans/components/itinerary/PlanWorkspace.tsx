@@ -10,7 +10,9 @@ import {
   type PlanRole,
 } from "@/lib/api";
 import { usePlanItinerary } from "@/features/plans/hooks/usePlanItinerary";
+import { PlanCollabProvider } from "@/features/plans/hooks/PlanCollabContext";
 import { useYPlanMeta } from "@/lib/yjs/hooks";
+import AwarenessPublisher from "@/features/plans/components/awareness/AwarenessPublisher";
 import ItineraryPlanner from "@/features/plans/components/itinerary/ItineraryPlanner";
 import PlanHeader from "@/features/plans/components/itinerary/PlanHeader";
 
@@ -44,7 +46,13 @@ export default function PlanWorkspace({
   }, [liveDateFrom, liveDateTo, plan.id, queryClient]);
 
   return (
-    <>
+    <PlanCollabProvider
+      planId={plan.id}
+      doc={itinerary.doc}
+      provider={itinerary.provider}
+      role={role}
+    >
+      <AwarenessPublisher />
       <PlanHeader
         plan={plan}
         destinations={destinations}
@@ -59,6 +67,6 @@ export default function PlanWorkspace({
         role={role}
         itinerary={itinerary}
       />
-    </>
+    </PlanCollabProvider>
   );
 }

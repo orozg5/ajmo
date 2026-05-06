@@ -5,17 +5,14 @@ import { useState } from "react";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import {
-  Bookmark,
   ChevronDown,
   ChevronUp,
   Clock,
   DollarSign,
   GripVertical,
-  Heart,
   ImageOff,
   MapPin,
   MapPinOff,
-  ThumbsUp,
   Timer,
   Trash2,
 } from "lucide-react";
@@ -27,14 +24,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 import { type EnrichedItem, type PlanItem } from "@/lib/api";
 import TransportCard from "@/features/plans/components/transport/TransportCard";
+import { useEditingReporter } from "@/features/plans/hooks/useEditingReporter";
 import { useItemNotes } from "@/features/plans/hooks/useItemNotes";
 import { ITEM_TYPE_STYLE, type ItemType } from "@/features/plans/utils/itemType";
-
-const REACTION_BUTTONS: Array<{ key: string; label: string; Icon: React.ComponentType<{ className?: string; strokeWidth?: number }> }> = [
-  { key: "thumbs", label: "Like", Icon: ThumbsUp },
-  { key: "heart", label: "Love", Icon: Heart },
-  { key: "bookmark", label: "Save", Icon: Bookmark },
-];
+import EditingPresence from "@/features/plans/components/awareness/EditingPresence";
+import ItemComments from "@/features/plans/components/itinerary/ItemComments";
+import ItemLike from "@/features/plans/components/itinerary/ItemLike";
+import ItemRating from "@/features/plans/components/itinerary/ItemRating";
 
 interface Props {
   item: PlanItem;
@@ -61,6 +57,8 @@ export default function ItemCard(props: Props) {
 function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = false, onHoverChange }: Props) {
   const typeStyle = ITEM_TYPE_STYLE[item.item_type as ItemType];
   const TypeIcon = typeStyle?.Icon;
+  const { reportFocus: reportNotesFocus, reportBlur: reportNotesBlur } =
+    useEditingReporter("item_notes", item.id);
 
   const [isExpanded, setIsExpanded] = useState(false);
   const { value: notes, handleChange: handleNotesChange } = useItemNotes({
@@ -292,10 +290,15 @@ function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = f
           ) : null}
 
           <div className="space-y-1.5">
-            <p className="text-xs font-medium uppercase tracking-wide text-ink-subtle">Notes</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-ink-subtle">Notes</p>
+              <EditingPresence kind="item_notes" id={item.id} />
+            </div>
             <Textarea
               value={notes}
               onChange={(event) => handleNotesChange(event.target.value)}
+              onFocus={reportNotesFocus}
+              onBlur={reportNotesBlur}
               placeholder="Add your notes here…"
               rows={3}
               className="resize-none text-sm"
@@ -304,21 +307,12 @@ function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = f
         </div>
       )}
 
-      <div className="mt-3 flex items-center gap-1.5 border-t border-border pt-2">
-        {REACTION_BUTTONS.map(({ key, label, Icon }) => (
-          <Tooltip key={key}>
-            <TooltipTrigger asChild>
-              <span
-                role="img"
-                aria-label={`${label} (coming soon)`}
-                className="inline-flex h-7 items-center gap-1 rounded-full border border-dashed border-border px-2 text-[11px] text-ink-subtle opacity-60"
-              >
-                <Icon className="size-3.5" strokeWidth={1.5} />
-              </span>
-            </TooltipTrigger>
-            <TooltipContent side="top">Reactions coming in Phase 5</TooltipContent>
-          </Tooltip>
-        ))}
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
+        <div className="flex items-center gap-1.5">
+          <ItemLike planItemId={item.id} />
+          <ItemComments planItemId={item.id} itemTitle={item.title} />
+        </div>
+        <ItemRating planItemId={item.id} />
       </div>
     </article>
     </>

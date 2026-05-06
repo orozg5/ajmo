@@ -3,6 +3,7 @@ from typing import Literal
 
 from app.db import get_supabase_client
 from app.services.plans.days import sync_days
+from app.services.social.activity import safe_record_activity
 from app.services.social.members import get_role
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,14 @@ async def create_plan(data: dict) -> dict:
     result = supabase.table("plans").insert(data).execute()
     if not result.data:
         raise ValueError("Failed to create plan")
-    return strip_yjs_state(result.data[0])
+    row = result.data[0]
+    await safe_record_activity(
+        row["id"],
+        row.get("owner_id"),
+        "plan_created",
+        {"title": row.get("title")},
+    )
+    return strip_yjs_state(row)
 
 
 async def get_plan(plan_id: str) -> dict:

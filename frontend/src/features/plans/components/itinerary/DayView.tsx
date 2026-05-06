@@ -35,7 +35,6 @@ type RenderSlot =
 
 interface Props {
   day: PlanDay;
-  planId: string;
   destinations: DestinationResponse[];
   onAddItem: (dayId: string, payload: AddItemPayload) => Promise<PlanItem>;
   onRemoveItem: (dayId: string, itemId: string) => void;

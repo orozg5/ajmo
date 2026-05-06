@@ -22,8 +22,12 @@ from app.routes.plans import router as plans_router
 from app.routes.social import (
     friends_router,
     invite_router,
+    plan_activity_router,
+    plan_comments_router,
     plan_invites_router,
     plan_members_router,
+    plan_ratings_router,
+    plan_reactions_router,
 )
 from app.routes.storage import router as storage_router
 from app.routes.transit import router as transit_router
@@ -72,6 +76,10 @@ app.include_router(users_router)
 app.include_router(friends_router)
 app.include_router(plan_members_router)
 app.include_router(plan_invites_router)
+app.include_router(plan_comments_router)
+app.include_router(plan_reactions_router)
+app.include_router(plan_ratings_router)
+app.include_router(plan_activity_router)
 app.include_router(invite_router)
 app.include_router(collab_router)
 

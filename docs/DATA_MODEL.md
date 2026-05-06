@@ -60,17 +60,23 @@ See `supabase/schema.sql` for authoritative DDL. This file documents shape + int
 ### `plan_invites` (new)
 - `id, plan_id, token unique, role, expires_at, max_uses, uses, created_by, created_at`.
 
-### `plan_comments` (new)
+### `plan_comments`
 - Threaded: `id, plan_id, plan_item_id nullable, author_id, body, parent_id nullable, created_at, updated_at, deleted_at`.
+- `plan_item_id IS NULL` ⇒ plan-wide chat; `plan_item_id` set ⇒ comment scoped to that item.
+- **Yjs-driven at runtime.** The Y.Doc's `comments` Y.Array is the source of truth while a plan is open; `services/collab/materializer.py:reconcile_comments` upserts by id (and deletes ids that drop out of the doc) on idle. Direct REST writes outside the materializer will be silently overwritten on the next flush.
 
-### `plan_item_reactions` (new)
-- PK `(plan_item_id, user_id, kind)`. `kind ∈ like | dislike | love | bookmark`.
+### `plan_item_reactions`
+- PK `(plan_item_id, user_id, kind)`. Enum `kind ∈ like | dislike | love | bookmark`.
+- **Only `kind='like'` is used in product flows.** The other enum values are harmless legacy from the original 3-button reactions strip; leaving them rather than running an enum migration.
+- **Yjs-driven at runtime.** The Y.Doc's `likes` Y.Map<itemId, Y.Map<userId, true>> is the source of truth while a plan is open; `materializer.py:reconcile_likes` diffs it against the `kind='like'` rows for items in the plan.
 
-### `plan_item_ratings` (new)
+### `plan_item_ratings`
 - PK `(plan_item_id, user_id)`. `stars int check (stars between 1 and 5)`.
+- **Yjs-driven at runtime.** The Y.Doc's `ratings` Y.Map<itemId, Y.Map<userId, number>> is the source of truth while a plan is open; `materializer.py:reconcile_ratings` upserts and deletes to match.
 
-### `plan_activity` (new)
+### `plan_activity`
 - Append-only: `id, plan_id, actor_id, kind text, payload jsonb, created_at`.
+- **REST-only**, not on the Y.Doc. `services/social/activity.py:safe_record_activity` is called from each writer (plan create, member changes, comment/reaction/rating mutations) as a fire-and-forget side-channel; failures log + continue.
 
 ## AI / RAG
 

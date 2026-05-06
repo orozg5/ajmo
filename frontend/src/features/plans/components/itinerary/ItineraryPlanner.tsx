@@ -228,7 +228,6 @@ export default function ItineraryPlanner({ plan, destinations, role, itinerary }
 
                 <DayView
                   day={activeDay}
-                  planId={plan.id}
                   destinations={activeDayDestinations}
                   onAddItem={addItem}
                   onRemoveItem={removeItem}
