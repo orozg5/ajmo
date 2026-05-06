@@ -1,35 +1,39 @@
+import { fetchOsrmRoute as fetchOsrmRouteFromBackend } from "@/lib/api";
+
 export interface LatLng {
   lat: number;
   lng: number;
 }
 
-const OSRM_BASE_URL = "https://router.project-osrm.org/route/v1/foot";
+export type OsrmProfile = "foot" | "bike" | "driving";
 
-interface OsrmRoute {
-  geometry?: { coordinates?: [number, number][] };
+export interface OsrmRouteResult {
+  coordinates: [number, number][];
+  distanceMeters: number;
+  durationSeconds: number;
 }
 
-interface OsrmResponse {
-  code?: string;
-  routes?: OsrmRoute[];
-}
-
-export async function fetchWalkingRoute(
+// Routes are resolved through the FastAPI backend (`POST /transit/osrm-route`)
+// rather than calling FOSSGIS directly: client-side OSRM is fragile under
+// browser DNS caches, hosts-file workarounds, and ad-block extensions, and
+// the public instance's 1-req/sec/host rate limit pairs badly with running
+// multiple <InlineTransportBar> instances at once. The backend retries
+// transient failures and shares the same OSRM client used by the cross-city
+// transport orchestrator.
+export async function fetchOsrmRoute(
   src: LatLng,
   dst: LatLng,
+  profile: OsrmProfile,
   signal?: AbortSignal,
-): Promise<[number, number][] | null> {
-  const coords = `${src.lng},${src.lat};${dst.lng},${dst.lat}`;
-  const params = new URLSearchParams({ overview: "full", geometries: "geojson" });
-  const url = `${OSRM_BASE_URL}/${coords}?${params.toString()}`;
-
+): Promise<OsrmRouteResult | null> {
   try {
-    const response = await fetch(url, { signal });
-    if (!response.ok) return null;
-    const payload: OsrmResponse = await response.json();
-    if (payload.code !== "Ok") return null;
-    const geometry = payload.routes?.[0]?.geometry?.coordinates;
-    return geometry && geometry.length > 1 ? geometry : null;
+    const result = await fetchOsrmRouteFromBackend(src, dst, profile, signal);
+    if (!result) return null;
+    return {
+      coordinates: result.geometry,
+      distanceMeters: result.distance_meters,
+      durationSeconds: result.duration_seconds,
+    };
   } catch {
     return null;
   }

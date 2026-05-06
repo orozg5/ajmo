@@ -11,7 +11,6 @@ from app.schemas.ai import (
     AiSuggestionItemResponse,
     AiSuggestionsResponse,
     CrossCityTransportRequest,
-    DayTransportRequest,
     EnrichedItemResponse,
     EnrichBatchRequest,
     EnrichRequest,
@@ -28,9 +27,7 @@ from app.services.ai.suggestions import (
 )
 from app.services.ai.transport import (
     get_cross_city_suggestions,
-    get_same_day_suggestions,
     stream_cross_city_suggestions,
-    stream_same_day_suggestions,
 )
 from app.services.plans.days import list_days_with_items
 from app.services.users.preferences import get_preferences
@@ -194,6 +191,7 @@ async def next_suggestion_route(
             existing_names,
             preferences,
             body.exclude_names,
+            exclude_slugs=body.exclude_slugs,
         )
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -205,30 +203,6 @@ async def next_suggestion_route(
         raise HTTPException(status_code=404, detail="No new suggestion could be generated")
 
     return AiSuggestionItemResponse(**suggestion)
-
-
-@router.post("/transport-suggestions/day")
-async def get_day_transport_route(
-    body: DayTransportRequest,
-    current_user: str = Depends(get_current_user),
-) -> TransportSuggestionsResponse:
-    """
-    Generate transport suggestions for all consecutive item pairs within a single day.
-
-    Pairs span across destination boundaries within the day, so same-day cross-city
-    travel (e.g. Rocky Steps → White House when Philly and DC share a day) is included.
-    Results are cached in plans.transport_suggestions["same_day"][day_id].
-    """
-    try:
-        suggestions_data = await get_same_day_suggestions(body.plan_id, body.day_id)
-        suggestions = [TransportSuggestionItem(**s) for s in suggestions_data]
-    except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-    except Exception:
-        logger.exception("Unexpected error generating day transport suggestions")
-        raise HTTPException(status_code=500, detail="Failed to generate transport suggestions")
-
-    return TransportSuggestionsResponse(suggestions=suggestions)
 
 
 @router.post("/transport-suggestions/cross-city")
@@ -337,37 +311,30 @@ async def suggestions_stream_route(
 async def transport_stream_route(
     request: Request,
     plan_id: str = Query(..., description="UUID of the plan"),
-    day_id: str | None = Query(
-        None,
-        description="UUID of a day for same-day scope; omit for cross-city scope.",
-    ),
     current_user: str = Depends(get_current_user),
 ) -> StreamingResponse:
-    """Stream transport suggestions pair-by-pair.
+    """Stream cross-city transport suggestions pair-by-pair.
 
-    Scope: if `day_id` is provided, generates same-day (intra-day adjacent items);
-    otherwise cross-city (last item of city A → first item of city B across the
-    plan). Cached pairs emit first, then new ones stream from the LLM and persist.
+    Generates cross-city pairs only (last item of city A → first item of city B
+    across the plan). Cached pairs emit first, then new ones come from the
+    backend orchestrator (OSRM driving, Transitous train/bus/ferry, haversine
+    flight estimator) and persist. Same-day same-city routing is handled by the
+    frontend via OSRM and the /transit/directions endpoint.
 
     Frames: `event: pair\\ndata: <TransportSuggestionItem JSON>\\n\\n`.
     Terminates with `event: done` or `event: error`.
     """
     async def event_stream():
         try:
-            source = (
-                stream_same_day_suggestions(plan_id, day_id)
-                if day_id is not None
-                else stream_cross_city_suggestions(plan_id)
-            )
-            async for pair in source:
+            async for pair in stream_cross_city_suggestions(plan_id):
                 if await request.is_disconnected():
                     return
                 yield sse_event("pair", pair)
             yield sse_event("done", {})
         except Exception:
             logger.exception(
-                "transport_stream_route failed for plan %s (day_id=%s)",
-                plan_id, day_id,
+                "transport_stream_route failed for plan %s",
+                plan_id,
             )
             yield sse_event("error", {"message": "Transport stream failed"})
 

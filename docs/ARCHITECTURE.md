@@ -33,15 +33,27 @@ user types "Hilt"
   → geocode via Nominatim / Mapbox → write lat/lng to places
 ```
 
-### Transport suggestion
+### Transport suggestion (no LLM, ADR 2026-05-06)
 
 ```
-day walk: sorted items per day → emit pair at every adjacency
-  → tag pair as same_day | same_day_cross_city (when destination_id changes)
-cross-day: destinations sorted by MIN(day_number) from plan_destination_days
+same-day (within a day, frontend-driven):
+  InlineTransportBar pair → useSameDayTransportOptions:
+    POST /transit/osrm-route × {foot, bike, driving}   → services/transport/osrm.py
+    POST /transit/directions                           → services/transit/directions.py (Transitous)
+  → user picks a mode → ai_data: { same_day_pair, mode, distance_meters, duration_seconds, … }
+
+cross-city (backend-orchestrated, streamed):
+  destinations sorted by MIN(day_number) from plan_destination_days
   → emit pair (lastOf(A), firstOf(B)) for each consecutive pair
-  → covered pairs excluded via ai_data.{same_day,cross_city}_pair markers
-  → LLM .with_structured_output(TransportResponse) on uncovered pairs only
+  → covered pairs excluded via ai_data.cross_city_pair markers
+  → services/transport/cross_city.py fans out per pair, in parallel:
+       drive  → OSRM driving               (skip if haversine > 1500 km)
+       train  → Transitous (RAIL family)
+       bus    → Transitous (BUS, COACH)    (skip if haversine > 1500 km)
+       ferry  → Transitous (FERRY)
+       flight → haversine + cruise estimate (skip if haversine < 200 km)
+  → stream pair results back over /ai/transport-suggestions/stream
+  → cache merged result in plans.transport_suggestions["cross_city"]
 ```
 
 ### Real-time edit (Phase 6)
@@ -81,7 +93,9 @@ browser online
 | LLM providers          | Gemini / Groq / Ollama    | Per-feature routing, see AI_PIPELINE.md       |
 | Search                 | Tavily                    | Web search for enrichment                     |
 | Maps / tiles           | MapLibre + MapTiler/OSM   | Rendering + pins + clustering                 |
-| Routing                | Public OSRM               | Walking polylines                             |
+| Routing — same-day     | FOSSGIS OSRM              | Walk/bike/drive polylines via `services/transport/osrm.py` (lazy `httpx.AsyncClient`) |
+| Routing — transit      | Transitous (MOTIS)        | Public-transit itineraries via `services/transit/directions.py` (lazy `httpx.AsyncClient`) |
+| Routing — flight est.  | Local haversine           | `services/transport/flight_estimator.py` — no API call |
 
 ## Key invariants
 

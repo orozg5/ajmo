@@ -24,8 +24,8 @@ export interface ProfileUpdate {
   bio?: string | null;
 }
 
-export const getPreferences = (): Promise<UserPreferences> =>
-  apiFetch<UserPreferences>("/users/me/preferences");
+export const getPreferences = (accessToken?: string | null): Promise<UserPreferences> =>
+  apiFetch<UserPreferences>("/users/me/preferences", undefined, accessToken);
 
 export const upsertPreferences = (data: UserPreferencesUpdate): Promise<UserPreferences> =>
   apiFetch<UserPreferences>("/users/me/preferences", {

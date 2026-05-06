@@ -9,7 +9,7 @@ Five user flows with code pointers at each step. Pair with [`NAVIGATION.md`](NAV
 3. User submits → `frontend/src/features/auth/components/LoginForm.tsx` calls `supabase.auth.signInWithPassword()` (or OAuth provider).
 4. OAuth path: Supabase redirects back with `?code=…` → `frontend/src/app/auth/callback/route.ts` calls `exchangeCodeForSession(code)` and sets the session cookie.
 5. Middleware runs again on the post-login request; the session is valid → user lands on their intended page.
-6. Dashboard page `frontend/src/app/page.tsx` server-renders with the authenticated Supabase client and fetches initial plans.
+6. Dashboard page `frontend/src/app/page.tsx` server-renders with the authenticated Supabase client, fetches `listPlans()` for owner/member/public scopes in parallel, and fetches the greeting profile via `lib/supabase/profile.ts`. It then mounts `features/plans/components/dashboard/DashboardSections.tsx`, which composes `HomeHero` (greeting + trip stats banner) and `TripsExplorer` (tabbed scope filter over `PlanCard` + `TripStatusPill`, driven by `usePlanFilters` and `useDashboardPlans`).
 
 ## 2. Create a plan
 
@@ -26,8 +26,8 @@ Five user flows with code pointers at each step. Pair with [`NAVIGATION.md`](NAV
 2. Server component resolves the session via `@/lib/supabase/server`, then fires three parallel fetches: `getPlan()`, `initializeDays()`, `getDestinations()` (all in `@/lib/api`, routed via FastAPI).
 3. Backend: `backend/app/routes/plans.py`, `plan_days.py`, `plan_destinations.py` query Postgres (RLS enforced on the anon path; service-role for backend-owned tables).
 4. Server component renders `<PlanHeader>` + `<ItineraryPlanner>` with SSR data.
-5. `frontend/src/features/plans/components/itinerary/ItineraryPlanner.tsx` mounts on the client — sets up `usePlanItinerary`, `useDayTransport`, `useCrossCityTransport`, `useHotels`, and `DndContext`.
-6. Day-by-day view rendered by `itinerary/DayView.tsx`; sidebar by `itinerary/DaySidebar.tsx`; map panel by `features/map/PlanMap.tsx`.
+5. `frontend/src/features/plans/components/itinerary/ItineraryPlanner.tsx` mounts on the client — sets up `usePlanItinerary`, `useCrossCityTransport`, `useHotels`, `DndContext`, and the `DragOverlayCard`. Same-day transport is per-pair (no plan-wide hook): `InlineTransportBar` → `useSameDayTransportOptions` + `useSameDayTransportInsert`.
+6. Day-by-day view rendered by `itinerary/DayView.tsx`; day navigation by `itinerary/DayTabs.tsx` (DnD-droppable chips, replaces the legacy DaySidebar); map panel by `features/map/PlanMap.tsx`. `PlanHeader` opens `EditPlanDialog` (General / Destinations / Danger tabs split across `EditPlanGeneralTab`, `EditPlanDestinationsTab`, `EditPlanDangerTab`) and `DeletePlanDialog`.
 
 ## 4. Add an item with AI enrichment
 
@@ -37,15 +37,27 @@ Five user flows with code pointers at each step. Pair with [`NAVIGATION.md`](NAV
 4. Enriched payload (description, price band, hours, photos, location) flows back; `ItemSearch` passes it up to `DayView.tsx` via `onEnrich`.
 5. User confirms → `DayView.handleSave` builds an `AddItemPayload` and calls `onAddItem(dayId, payload)` (from `usePlanItinerary`).
 6. Hook posts `POST /plans/{id}/items` → `backend/app/routes/plan_items.py` → inserts the row; optimistic update reflects in the UI immediately.
-7. Follow-up: `useDayTransport` sees a new within-day pair and refetches transport suggestions for that day (see flow 5).
+7. Follow-up: same-day transport is no longer auto-refetched. The `InlineTransportBar` between adjacent items is the user's explicit entry point — when expanded, `useSameDayTransportOptions` fans out OSRM (walk/bike/drive) and Transitous (transit) calls for that pair; `useSameDayTransportInsert` writes the chosen mode as a transport plan item with `ai_data.same_day_pair`.
 
-## 5. Get transport suggestions
+## 5. Get transport suggestions (no LLM, ADR 2026-05-06)
 
-1. User clicks "Get transport" on a day (rendered by `frontend/src/features/plans/components/transport/InlineTransportBar.tsx`) **or** opens the cross-city panel (`transport/CrossCityTransportPanel.tsx`).
-2. Hook fires the request: `useDayTransport` → `POST /ai/transport-suggestions/day`, or `useCrossCityTransport` → `POST /ai/transport-suggestions/cross-city`.
-3. Backend route `backend/app/routes/ai.py:210` / `:234` delegates to `backend/app/services/ai/transport.py` (`get_same_day_suggestions` / `get_cross_city_suggestions`).
-4. Cache check: `transport.py` reads `ai_attraction_cache`-style full-cache key via `read_full_cache()`. Hit → return immediately.
-5. Miss → build pair graph via `backend/app/services/ai/transport_pairs.py` (`build_same_day_pairs` / `build_cross_city_pairs`, `resolve_item_location`).
-6. LLM call + assembly via `backend/app/services/ai/transport_llm.py` (`build_transport_prompt`, `call_llm_for_transport`, `assemble_suggestions`). Structured output typed by `services/ai/schemas.py` (`TransportResponse` of `LlmTransportOption`).
-7. Cache the full response (`write_full_cache`) and return `TransportSuggestion[]` to the frontend.
-8. Frontend renders options inside `InlineTransportBar` / `CrossCityTransportPanel`. Clicking an option calls `onAddTransportOption` → `POST /plans/{id}/items` with `item_type: "transport"`. The new item is paired back to its source via `ai_data.same_day_pair` / `cross_city_pair`.
+### Same-day (within a day, frontend-driven)
+
+1. User expands `frontend/src/features/plans/components/transport/InlineTransportBar.tsx` between two adjacent items.
+2. `useSameDayTransportOptions` fans out four parallel calls:
+   - `POST /transit/osrm-route` × {`foot`, `bike`, `driving`} — `backend/app/routes/transit.py:transit_osrm_route_route` → `services/transport/osrm.py:get_route`.
+   - `POST /transit/directions` — `backend/app/routes/transit.py:transit_directions_route` → `services/transit/directions.py:get_transit_directions` (Transitous MOTIS).
+   Each endpoint returns 204 when no route exists, and the corresponding mode button is hidden.
+3. User picks a mode → `useSameDayTransportInsert` calls `addPlanItem` with `item_type: "transport"` and `ai_data: { same_day_pair, mode, distance_meters, duration_seconds, transit_summary?, geometry? }`.
+
+### Cross-city (backend-orchestrated, streamed)
+
+1. User opens `transport/CrossCityTransportPanel.tsx`.
+2. `useCrossCityTransport` opens an SSE stream to `GET /ai/transport-suggestions/stream?plan_id=…` (`backend/app/routes/ai.py:transport_stream_route`).
+3. Backend builds the cross-city pair graph via `services/ai/transport_pairs.py` (`build_cross_city_pairs`), reads `plans.transport_suggestions["cross_city"]` for cached hits, and streams cached pairs first.
+4. For uncovered pairs, `services/transport/cross_city.py:stream_options_for_pairs` resolves source/destination coords (geocoding sentinel cities through Nominatim when needed) and fans out per pair, in parallel:
+   - `OSRM` driving (skipped when haversine > 1500 km)
+   - `Transitous` train (RAIL family), bus (BUS / COACH; skipped > 1500 km), ferry
+   - `flight_estimator` haversine + cruise estimate (skipped < 200 km)
+5. Each pair streams back as an `event: pair` frame containing `options[]` of `{ mode, name, duration_seconds, distance_meters, is_estimate, transit_summary?, geometry? }`. Backend persists the merged result back into `plans.transport_suggestions["cross_city"]`.
+6. Frontend renders options in `CrossCityTransportPanel`. Selecting one calls `addPlanItem` with `item_type: "transport"` and `ai_data.cross_city_pair = "{src}->{dst}"` so subsequent fetches skip covered pairs.

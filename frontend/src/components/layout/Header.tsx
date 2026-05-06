@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Settings, User as UserIcon, LogOut } from "lucide-react";
+import { Settings, LogOut } from "lucide-react";
 
 import Logo from "@/components/brand/Logo";
 import ThemeToggle from "@/components/theme/ThemeToggle";
@@ -13,6 +13,7 @@ type HeaderProps = {
   userEmail?: string | null;
   userAvatarUrl?: string | null;
   userDisplayName?: string | null;
+  userUsername?: string | null;
 };
 
 function initialsFor(name?: string | null, email?: string | null): string {
@@ -29,7 +30,11 @@ export default function Header({
   userEmail,
   userAvatarUrl,
   userDisplayName,
+  userUsername,
 }: HeaderProps) {
+  const primaryName =
+    userDisplayName ?? userUsername ?? userEmail?.split("@")[0] ?? "Signed in";
+
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur">
       <div className="flex h-16 w-full items-center justify-between gap-4 px-[clamp(1rem,3vw,3rem)]">
@@ -50,32 +55,37 @@ export default function Header({
                   className="rounded-full outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   aria-label="Open account menu"
                 >
-                  <Avatar size="sm">
+                  <Avatar size="default">
                     {userAvatarUrl ? <AvatarImage src={userAvatarUrl} alt="" /> : null}
-                    <AvatarFallback>{initialsFor(userDisplayName, userEmail)}</AvatarFallback>
+                    <AvatarFallback>{initialsFor(primaryName, userEmail)}</AvatarFallback>
                   </Avatar>
                 </button>
               </PopoverTrigger>
-              <PopoverContent align="end" className="w-56 p-1.5">
-                <div className="px-2 py-1.5 text-xs text-ink-subtle">
-                  {userDisplayName ?? userEmail ?? "Signed in"}
+              <PopoverContent align="end" className="w-64 gap-0 p-0">
+                <div className="flex items-center gap-3 px-3 py-3">
+                  <Avatar size="default">
+                    {userAvatarUrl ? <AvatarImage src={userAvatarUrl} alt="" /> : null}
+                    <AvatarFallback>{initialsFor(primaryName, userEmail)}</AvatarFallback>
+                  </Avatar>
+                  <div className="flex min-w-0 flex-col">
+                    <span className="truncate text-sm font-medium text-ink">{primaryName}</span>
+                    {userEmail ? (
+                      <span className="truncate text-xs text-ink-subtle">{userEmail}</span>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="my-1 h-px bg-border" />
-                <Button asChild variant="ghost" size="sm" className="w-full justify-start">
-                  <Link href="/settings/profile">
-                    <UserIcon className="size-4" strokeWidth={1.5} />
-                    Profile
-                  </Link>
-                </Button>
-                <Button asChild variant="ghost" size="sm" className="w-full justify-start">
-                  <Link href="/settings/preferences">
-                    <Settings className="size-4" strokeWidth={1.5} />
-                    Preferences
-                  </Link>
-                </Button>
-                <div className="my-1 h-px bg-border" />
-                <div className="px-1">
-                  <LogoutButton>
+                <div className="h-px bg-border" />
+                <div className="space-y-0.5 p-1.5">
+                  <Button asChild variant="ghost" size="sm" className="h-9 w-full justify-start gap-2.5 px-2">
+                    <Link href="/settings">
+                      <Settings className="size-4" strokeWidth={1.5} />
+                      Settings
+                    </Link>
+                  </Button>
+                </div>
+                <div className="h-px bg-border" />
+                <div className="p-1.5">
+                  <LogoutButton className="h-9 gap-2.5 px-2">
                     <LogOut className="size-4" strokeWidth={1.5} />
                     Log out
                   </LogoutButton>
@@ -88,15 +98,9 @@ export default function Header({
             <ThemeToggle />
             <Link
               href="/login"
-              className="rounded-lg px-3 py-2 text-sm font-medium text-ink-subtle transition-colors hover:text-ink hover:bg-muted"
-            >
-              Log in
-            </Link>
-            <Link
-              href="/register"
               className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
-              Sign up
+              Sign in
             </Link>
           </nav>
         )}

@@ -1,5 +1,4 @@
 import { createClient } from "@/lib/supabase/client";
-import { createSseClient } from "@/lib/api/generated/core/serverSentEvents.gen";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
@@ -40,27 +39,48 @@ export async function apiSse<T>(
   const headers: Record<string, string> = { Accept: "text/event-stream" };
   if (token) headers.Authorization = `Bearer ${token}`;
 
+  const res = await fetch(`${API_URL}${path}`, { headers, signal });
+  if (!res.ok || !res.body) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `HTTP ${res.status}`);
+  }
+
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
   let errorMessage: string | null = null;
 
-  const { stream } = createSseClient<T>({
-    url: `${API_URL}${path}`,
-    method: "GET",
-    headers,
-    signal,
-    sseMaxRetryAttempts: 1,
-    onSseEvent: (ev) => {
-      if (!ev.event) return;
-      if (ev.event === "error") {
-        const data = ev.data as { message?: string } | undefined;
-        errorMessage = data?.message ?? "Stream failed";
-        return;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+      let frameEnd: number;
+      while ((frameEnd = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, frameEnd);
+        buffer = buffer.slice(frameEnd + 2);
+        let eventName = "message";
+        const dataLines: string[] = [];
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event:")) eventName = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+        }
+        if (dataLines.length === 0) continue;
+        let payload: T;
+        try {
+          payload = JSON.parse(dataLines.join("\n")) as T;
+        } catch {
+          continue;
+        }
+        if (eventName === "error") {
+          const data = payload as { message?: string } | undefined;
+          errorMessage = data?.message ?? "Stream failed";
+          continue;
+        }
+        onEvent(eventName, payload);
       }
-      onEvent(ev.event, ev.data as T);
-    },
-  });
-
-  for await (const _chunk of stream) {
-    // sink — events are delivered via onSseEvent above
+    }
+  } finally {
+    reader.releaseLock();
   }
 
   if (errorMessage) throw new Error(errorMessage);

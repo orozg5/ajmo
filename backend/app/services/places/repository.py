@@ -11,17 +11,30 @@ logger = logging.getLogger(__name__)
 async def upsert_place(data: dict) -> dict | None:
     """
     Upsert a place into the permanent places table.
-    On conflict (slug, item_type) the existing row is left unchanged.
+    On conflict (slug, item_type) the existing row is left unchanged
+    (`ignore_duplicates=True`) — first write wins. The cache-miss path in
+    enrichment.py already short-circuits when the row exists, so this is a
+    safety net against double-writes from concurrent enrichments.
     Failure is non-fatal — logged as warning, returns None.
     """
     supabase = get_supabase_client()
     try:
         response = (
             supabase.table("places")
-            .upsert(data, on_conflict="slug,item_type")
+            .upsert(data, on_conflict="slug,item_type", ignore_duplicates=True)
             .execute()
         )
-        return response.data[0] if response.data else None
+        if response.data:
+            return response.data[0]
+        existing = (
+            supabase.table("places")
+            .select("*")
+            .eq("slug", data["slug"])
+            .eq("item_type", data["item_type"])
+            .limit(1)
+            .execute()
+        )
+        return existing.data[0] if existing.data else None
     except Exception as exc:
         logger.warning("places upsert failed for slug=%s: %s", data.get("slug"), exc)
         return None
@@ -36,7 +49,7 @@ async def autocomplete_places(q: str, destination: str, item_type: str) -> list[
     response = (
         supabase.table("places")
         .select("*")
-        .ilike("name", f"%{q}%")
+        .ilike("name", f"{q}%")
         .eq("destination", destination)
         .eq("item_type", item_type)
         .limit(10)

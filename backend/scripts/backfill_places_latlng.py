@@ -86,12 +86,10 @@ async def backfill(dry_run: bool, limit: int | None, sleep_ms: int, force: bool)
     for row in rows:
         destination = row["destination"]
         country_code = resolve_country_code(destination)
-        destination_tokens = [t.strip().lower() for t in destination.split(",") if t.strip()]
         query_text = f"{row['name']}, {destination}"
         geo = await geocode_with_validation(
             query_text,
             country_code=country_code,
-            destination_tokens=destination_tokens,
         )
         if geo is None:
             missed += 1
@@ -105,8 +103,8 @@ async def backfill(dry_run: bool, limit: int | None, sleep_ms: int, force: bool)
         ).eq("id", row["id"]).execute()
         filled += 1
         logger.info(
-            "updated %s (%s) → lat=%.4f lng=%.4f tz=%s source=%s",
-            row["name"], destination, geo.lat, geo.lng, tz, geo.source,
+            "updated %s (%s) → lat=%.4f lng=%.4f tz=%s",
+            row["name"], destination, geo.lat, geo.lng, tz,
         )
         await asyncio.sleep(sleep_ms / 1000)
 

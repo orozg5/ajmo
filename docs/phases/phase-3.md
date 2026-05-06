@@ -13,7 +13,7 @@
 ### dnd-kit integration
 
 - [x] `ItineraryPlanner` wraps the whole planner in a single `<DndContext>`; `DayView` uses `<SortableContext>` + `verticalListSortingStrategy`.
-- [x] Drag scopes covered: within-day reorder (drop on another item), across-day drop (drop on `DaySidebar` chip via `useDroppable`).
+- [x] Drag scopes covered: within-day reorder (drop on another item), across-day drop (drop on `DaySidebar` chip via `useDroppable`). (`DaySidebar` later renamed to `DayTabs` in the 2026-05-06 plan-editor rebuild — same droppable behaviour, tabbed presentation.)
 - [x] Sort-key generation: `computeSortKeyBetween` wraps `generateKeyBetween` from `fractional-indexing-jittered` in `features/plans/utils/sortKeys.ts`.
 - [x] Keyboard DnD enabled via `KeyboardSensor` with `sortableKeyboardCoordinates`.
 

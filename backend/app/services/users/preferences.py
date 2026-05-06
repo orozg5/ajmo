@@ -29,4 +29,9 @@ async def upsert_preferences(user_id: str, payload: dict) -> dict:
     )
     if not result.data:
         raise ValueError(f"Failed to upsert preferences for user {user_id!r}")
+
+    # Suggestions cached in plans.suggestions reflect the prior preferences.
+    # Null them so the next /ai/suggestions call regenerates with fresh prefs.
+    supabase.table("plans").update({"suggestions": None}).eq("owner_id", user_id).execute()
+
     return result.data[0]

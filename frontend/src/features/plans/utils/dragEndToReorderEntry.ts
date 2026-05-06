@@ -1,7 +1,7 @@
 import { type DragEndEvent } from "@dnd-kit/core";
 
 import { type PlanDay, type PlanItem, type ReorderEntry } from "@/lib/api";
-import { DAY_DROPPABLE_PREFIX } from "@/features/plans/components/itinerary/DaySidebar";
+import { DAY_DROPPABLE_PREFIX } from "@/features/plans/components/itinerary/DayTabs";
 import { appendSortKey, computeSortKeyBetween, sortItems } from "@/features/plans/utils/sortKeys";
 
 export type DragEndResult = {
@@ -11,8 +11,7 @@ export type DragEndResult = {
 };
 
 // Pure: turns a dnd-kit DragEndEvent into a reorder entry + affected day ids,
-// or null when the drag is a no-op (same target, unknown item, missing day,
-// or a cross-destination transport move we intentionally forbid).
+// or null when the drag is a no-op (same target, unknown item, missing day).
 export function dragEndToReorderEntry(
   event: DragEndEvent,
   itemIndex: Map<string, PlanItem>,
@@ -48,15 +47,6 @@ export function dragEndToReorderEntry(
 
   const overItem = itemIndex.get(overId);
   if (!overItem) return null;
-
-  // F3: Transport cards can only be reordered within the same destination.
-  // Moving them across city sections breaks the source/dest pair marker.
-  if (
-    activeItem.item_type === "transport" &&
-    overItem.destination_id !== activeItem.destination_id
-  ) {
-    return null;
-  }
 
   const targetDayId = overItem.day_id;
   const targetDay = days.find((d) => d.id === targetDayId);

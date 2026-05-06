@@ -25,8 +25,28 @@ export interface CrossCityMarker {
   cross_city_pair: string;
 }
 
-export interface SameDayMarker {
+export type SameDayTransportMode = "walk" | "bike" | "drive" | "transit";
+
+export type CrossCityTransportMode = "drive" | "train" | "bus" | "ferry" | "flight";
+
+export interface CrossCityTransportData {
+  cross_city_pair: string;
+  source_destination_id: string;
+  destination_destination_id: string;
+  mode: CrossCityTransportMode;
+  duration_seconds: number | null;
+  distance_meters: number | null;
+  is_estimate: boolean;
+  transit_summary: string | null;
+}
+
+export interface SameDayTransportData {
   same_day_pair: string;
+  mode: SameDayTransportMode;
+  distance_meters: number;
+  duration_seconds: number;
+  transit_summary?: string;
+  geometry?: [number, number][];
 }
 
 export interface PlaceSuggestion {
@@ -57,19 +77,25 @@ export interface AiSuggestionsResult {
 }
 
 export interface TransportOption {
+  mode: CrossCityTransportMode;
   name: string;
-  one_line: string | null;
-  price_hint: string | null;
+  duration_seconds: number | null;
+  distance_meters: number | null;
+  is_estimate: boolean;
+  transit_summary: string | null;
+  geometry: [number, number][] | null;
 }
 
 export interface TransportSuggestion {
   source_item_id: string | null;
   source_item_title: string | null;
   source_item_location: string | null;
+  source_destination_id: string | null;
   destination_item_id: string | null;
   destination_item_title: string | null;
   destination_item_location: string | null;
-  scope: "same_day" | "cross_city" | null;
+  destination_destination_id: string | null;
+  scope: "cross_city" | null;
   source_day_number: number | null;
   destination_day_number: number | null;
   source_city: string | null;
@@ -137,42 +163,19 @@ export const getSuggestions = (
 export const getNextSuggestion = (
   planId: string,
   excludeNames: string[],
+  excludeSlugs: string[] = [],
   signal?: AbortSignal,
 ): Promise<AiSuggestion> =>
   apiFetch<AiSuggestion>("/ai/suggestions/next", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ plan_id: planId, exclude_names: excludeNames }),
+    body: JSON.stringify({
+      plan_id: planId,
+      exclude_names: excludeNames,
+      exclude_slugs: excludeSlugs,
+    }),
     signal,
   });
-
-export const getDayTransportSuggestions = (
-  planId: string,
-  dayId: string,
-  signal?: AbortSignal,
-): Promise<TransportSuggestionsResult> =>
-  apiFetch<TransportSuggestionsResult>("/ai/transport-suggestions/day", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ plan_id: planId, day_id: dayId }),
-    signal,
-  });
-
-export const streamDayTransportSuggestions = (
-  planId: string,
-  dayId: string,
-  onPair: (pair: TransportSuggestion) => void,
-  signal?: AbortSignal,
-): Promise<void> => {
-  const params = new URLSearchParams({ plan_id: planId, day_id: dayId });
-  return apiSse<TransportSuggestion>(
-    `/ai/transport-suggestions/stream?${params.toString()}`,
-    (name, data) => {
-      if (name === "pair") onPair(data);
-    },
-    signal,
-  );
-};
 
 export const streamCrossCityTransportSuggestions = (
   planId: string,

@@ -2,6 +2,7 @@ import logging
 from typing import Literal
 
 from app.db import get_supabase_client
+from app.services.plans.days import sync_days
 
 logger = logging.getLogger(__name__)
 
@@ -74,19 +75,72 @@ async def list_user_plans(user_id: str, scope: PlanScope = "owner") -> list[dict
     return rows
 
 
-async def update_plan(plan_id: str, data: dict) -> dict:
-    """Update plan fields (excluding yjs_state) and return the updated record."""
+async def update_plan(plan_id: str, owner_id: str, data: dict) -> dict:
+    """Update plan fields for the owner and return the updated record.
+
+    Backend uses the Supabase service_role key, which bypasses the
+    "owner writes plan" RLS policy, so we must filter by owner_id here.
+    Non-owner requests are indistinguishable from a missing plan
+    (both raise ValueError → 404), so we don't leak existence.
+
+    yjs_state is never written from this path — Hocuspocus is the only writer.
+
+    When the patch touches date_from or date_to, plan_days is reconciled
+    to the new range first; may raise DateShrinkBlocked if a day with
+    items would be dropped.
+    """
     data.pop("yjs_state", None)
     supabase = get_supabase_client()
-    result = supabase.table("plans").update(data).eq("id", plan_id).execute()
+
+    current_result = (
+        supabase.table("plans")
+        .select("date_from, date_to")
+        .eq("id", plan_id)
+        .eq("owner_id", owner_id)
+        .execute()
+    )
+    if not current_result.data:
+        raise ValueError(f"Plan {plan_id!r} not found")
+    current = current_result.data[0]
+
+    if "date_from" in data or "date_to" in data:
+        new_date_from = data["date_from"] if "date_from" in data else current.get("date_from")
+        new_date_to = data["date_to"] if "date_to" in data else current.get("date_to")
+        await sync_days(plan_id, new_date_from, new_date_to)
+
+    if not data:
+        result = supabase.table("plans").select("*").eq("id", plan_id).execute()
+        if not result.data:
+            raise ValueError(f"Plan {plan_id!r} not found")
+        return result.data[0]
+
+    result = (
+        supabase.table("plans")
+        .update(data)
+        .eq("id", plan_id)
+        .eq("owner_id", owner_id)
+        .execute()
+    )
     if not result.data:
         raise ValueError(f"Plan {plan_id!r} not found")
     return result.data[0]
 
 
-async def delete_plan(plan_id: str) -> None:
-    """Delete a plan by id. Raises ValueError if the plan did not exist."""
+async def delete_plan(plan_id: str, owner_id: str) -> None:
+    """Delete a plan by id if owned by owner_id. Raises ValueError otherwise.
+
+    Backend uses the Supabase service_role key, which bypasses RLS, so the
+    "owner writes plan" policy does not protect this path. Filtering by
+    owner_id here makes a non-owner's request indistinguishable from a
+    missing plan (both raise ValueError → 404), so we don't leak existence.
+    """
     supabase = get_supabase_client()
-    result = supabase.table("plans").delete().eq("id", plan_id).execute()
+    result = (
+        supabase.table("plans")
+        .delete()
+        .eq("id", plan_id)
+        .eq("owner_id", owner_id)
+        .execute()
+    )
     if not result.data:
         raise ValueError(f"Plan {plan_id!r} not found")

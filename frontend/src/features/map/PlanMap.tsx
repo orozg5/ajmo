@@ -3,9 +3,12 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Focus, Layers } from "lucide-react";
+import { ChevronDown, Focus, MapPin } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import type { DestinationResponse, PlanDay, PlanHotel } from "@/lib/api";
 import { createPlanMap, type PlanMapController } from "@/lib/map/init";
 
@@ -116,57 +119,106 @@ export default function PlanMap({
     });
   }
 
+  const visibleDestinationCount = destinations.length - excludedDestinationIds.size;
+
   return (
     <div className="flex h-full flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          variant={filterMode === "all" ? "default" : "outline"}
-          onClick={() => setFilterMode("all")}
+        <div
+          role="tablist"
+          aria-label="Map day filter"
+          className="inline-flex rounded-full border border-border bg-card p-0.5"
         >
-          <Layers className="size-4" strokeWidth={1.5} />
-          All days
-        </Button>
-        <Button
-          size="sm"
-          variant={filterMode === "active-day" ? "default" : "outline"}
-          onClick={() => setFilterMode("active-day")}
-          disabled={!activeDayId}
-        >
-          Active day only
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => controllerRef.current?.fitToItems()}
-          disabled={markers.length === 0}
-        >
-          <Focus className="size-4" strokeWidth={1.5} />
-          Fit
-        </Button>
-      </div>
-
-      {destinations.length > 1 && (
-        <div className="flex flex-wrap gap-1.5">
-          {destinations.map((dest) => {
-            const active = !excludedDestinationIds.has(dest.id);
-            return (
-              <button
-                key={dest.id}
-                type="button"
-                onClick={() => toggleDestination(dest.id)}
-                className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
-                  active
-                    ? "border-primary/40 bg-primary/10 text-primary"
-                    : "border-border bg-surface text-ink-subtle"
-                }`}
-              >
-                {dest.city}
-              </button>
-            );
-          })}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={filterMode === "all"}
+            onClick={() => setFilterMode("all")}
+            className={cn(
+              "cursor-pointer rounded-full px-3 py-1 text-xs font-medium transition-colors",
+              filterMode === "all"
+                ? "bg-primary/10 text-primary"
+                : "text-ink-subtle hover:text-ink",
+            )}
+          >
+            All days
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={filterMode === "active-day"}
+            onClick={() => setFilterMode("active-day")}
+            disabled={!activeDayId}
+            className={cn(
+              "cursor-pointer rounded-full px-3 py-1 text-xs font-medium transition-colors",
+              filterMode === "active-day"
+                ? "bg-primary/10 text-primary"
+                : "text-ink-subtle hover:text-ink",
+              !activeDayId && "cursor-not-allowed opacity-40",
+            )}
+          >
+            Active day only
+          </button>
         </div>
-      )}
+
+        {destinations.length > 1 && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                className="cursor-pointer gap-1.5"
+              >
+                <MapPin className="size-3.5" strokeWidth={1.5} />
+                Cities
+                <span className="text-ink-subtle">
+                  {visibleDestinationCount}/{destinations.length}
+                </span>
+                <ChevronDown className="size-3.5 opacity-60" strokeWidth={1.5} />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-56">
+              <div className="flex flex-col gap-1">
+                {destinations.map((dest) => {
+                  const active = !excludedDestinationIds.has(dest.id);
+                  return (
+                    <label
+                      key={dest.id}
+                      className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={active}
+                        onChange={() => toggleDestination(dest.id)}
+                        className="size-4 cursor-pointer accent-primary"
+                      />
+                      <span className="flex-1">{dest.city}</span>
+                      <span className="text-xs text-ink-subtle">{dest.country}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-auto cursor-pointer"
+              onClick={() => controllerRef.current?.fitToItems()}
+              disabled={markers.length === 0}
+              aria-label="Re-center map on items"
+            >
+              <Focus className="size-4" strokeWidth={1.5} />
+              Fit
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Re-center on items</TooltipContent>
+        </Tooltip>
+      </div>
 
       <div
         ref={containerRef}

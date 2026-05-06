@@ -6,14 +6,10 @@ import PlanHeader from "@/features/plans/components/itinerary/PlanHeader";
 export default async function PlanPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = await createClient();
-  const [
-    {
-      data: { session },
-    },
-    {
-      data: { user },
-    },
-  ] = await Promise.all([supabase.auth.getSession(), supabase.auth.getUser()]);
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const user = session?.user ?? null;
   const token = session?.access_token ?? null;
 
   const [plan, days, destinations] = await Promise.all([

@@ -19,7 +19,7 @@ export interface MapItem {
   kind?: MapItemKind;
 }
 
-export type RouteKind = "walk" | "transit";
+export type RouteKind = "walk" | "bike" | "drive" | "transit" | "intercity";
 
 export interface RouteSegment {
   id: string;
@@ -27,6 +27,16 @@ export interface RouteSegment {
   kind: RouteKind;
   label?: string;
 }
+
+const ROUTE_STYLE: Record<RouteKind, { color: string; width: number; dasharray?: [number, number] }> = {
+  walk: { color: "#1e6fbf", width: 3 },
+  bike: { color: "#2d8f4d", width: 3 },
+  drive: { color: "#d97f3a", width: 3 },
+  transit: { color: "#7b3fa3", width: 3 },
+  intercity: { color: "#8a4a2a", width: 2, dasharray: [2, 2] },
+};
+
+const ROUTE_KINDS: RouteKind[] = ["walk", "bike", "drive", "transit", "intercity"];
 
 export interface PlanMapController {
   map: MapLibreMap;
@@ -39,8 +49,13 @@ export interface PlanMapController {
   destroy(): void;
 }
 
-const WALK_SOURCE_ID = "walk-routes";
-const TRANSIT_SOURCE_ID = "transit-routes";
+function sourceIdFor(kind: RouteKind): string {
+  return `${kind}-routes`;
+}
+
+function lineLayerIdFor(kind: RouteKind): string {
+  return `${kind}-routes-line`;
+}
 
 export function createPlanMap(
   container: HTMLElement,
@@ -82,40 +97,35 @@ export function createPlanMap(
 
   const ready = new Promise<void>((resolve) => {
     map.on("load", () => {
-      map.addSource(WALK_SOURCE_ID, {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
-      map.addLayer({
-        id: "walk-routes-line",
-        type: "line",
-        source: WALK_SOURCE_ID,
-        paint: {
-          "line-color": "#1e6fbf",
-          "line-width": 3,
-          "line-opacity": 0.75,
-        },
-      });
+      for (const kind of ROUTE_KINDS) {
+        const sourceId = sourceIdFor(kind);
+        const style = ROUTE_STYLE[kind];
 
-      map.addSource(TRANSIT_SOURCE_ID, {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
-      map.addLayer({
-        id: "transit-routes-line",
-        type: "line",
-        source: TRANSIT_SOURCE_ID,
-        paint: {
-          "line-color": "#8a4a2a",
-          "line-width": 2,
-          "line-dasharray": [2, 2],
+        map.addSource(sourceId, {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+
+        const paint: Record<string, unknown> = {
+          "line-color": style.color,
+          "line-width": style.width,
           "line-opacity": 0.8,
-        },
-      });
+        };
+        if (style.dasharray) {
+          paint["line-dasharray"] = style.dasharray;
+        }
+        map.addLayer({
+          id: lineLayerIdFor(kind),
+          type: "line",
+          source: sourceId,
+          paint,
+        });
+      }
+
       map.addLayer({
-        id: "transit-routes-labels",
+        id: "intercity-routes-labels",
         type: "symbol",
-        source: TRANSIT_SOURCE_ID,
+        source: sourceIdFor("intercity"),
         layout: {
           "text-field": ["get", "label"],
           "text-size": 11,
@@ -139,25 +149,17 @@ export function createPlanMap(
   });
 
   function writeRoutes(routes: RouteSegment[]): void {
-    const walkFeatures = routes
-      .filter((r) => r.kind === "walk")
-      .map((r) => ({
-        type: "Feature" as const,
-        geometry: { type: "LineString" as const, coordinates: r.coordinates },
-        properties: { id: r.id, label: r.label ?? "" },
-      }));
-    const transitFeatures = routes
-      .filter((r) => r.kind === "transit")
-      .map((r) => ({
-        type: "Feature" as const,
-        geometry: { type: "LineString" as const, coordinates: r.coordinates },
-        properties: { id: r.id, label: r.label ?? "" },
-      }));
-
-    const walkSource = map.getSource(WALK_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    const transitSource = map.getSource(TRANSIT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    walkSource?.setData({ type: "FeatureCollection", features: walkFeatures });
-    transitSource?.setData({ type: "FeatureCollection", features: transitFeatures });
+    for (const kind of ROUTE_KINDS) {
+      const features = routes
+        .filter((r) => r.kind === kind)
+        .map((r) => ({
+          type: "Feature" as const,
+          geometry: { type: "LineString" as const, coordinates: r.coordinates },
+          properties: { id: r.id, label: r.label ?? "" },
+        }));
+      const source = map.getSource(sourceIdFor(kind)) as maplibregl.GeoJSONSource | undefined;
+      source?.setData({ type: "FeatureCollection", features });
+    }
   }
 
   function setItems(items: MapItem[]): void {

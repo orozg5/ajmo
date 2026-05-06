@@ -97,6 +97,7 @@ create table plan_items (
   plan_id uuid references plans(id) on delete cascade,
   day_id uuid references plan_days(id) on delete cascade,
   added_by uuid references profiles(id),
+  place_id uuid,
   item_type text not null,
   title text not null,
   notes text,
@@ -112,7 +113,7 @@ create table plan_items (
   updated_at timestamptz default now()
 );
 
-comment on column plan_items.sort_order is 'Deprecated — use sort_key. Kept one release for safety.';
+comment on column plan_items.sort_order is 'Integer ordering used by transport-pair sequencing and cross-city slot anchoring. Coexists with sort_key (fractional, used by DnD).';
 
 create table plan_hotels (
   id uuid primary key default uuid_generate_v4(),
@@ -221,6 +222,12 @@ create table ai_attraction_cache (
   expires_at timestamptz
 );
 
+-- Cross-table FK: plan_items.place_id → places.id (forward-declared above
+-- because places is defined later in this file).
+alter table plan_items
+  add constraint plan_items_place_id_fkey
+  foreign key (place_id) references places(id) on delete set null;
+
 -- Indexes (hot paths) --------------------------------------------------------
 create index idx_plans_owner on plans(owner_id);
 create index idx_plan_members_user on plan_members(user_id);
@@ -229,6 +236,7 @@ create index idx_plan_days_plan on plan_days(plan_id);
 create index idx_plan_items_plan on plan_items(plan_id);
 create index idx_plan_items_day on plan_items(day_id);
 create index idx_plan_items_destination on plan_items(destination_id);
+create index idx_plan_items_place on plan_items(place_id);
 create index idx_plan_hotels_plan on plan_hotels(plan_id);
 create index idx_plan_comments_plan_created on plan_comments(plan_id, created_at desc);
 create index idx_plan_comments_item on plan_comments(plan_item_id);

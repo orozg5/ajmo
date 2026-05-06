@@ -1,27 +1,34 @@
 import { redirect } from "next/navigation";
 
+import { getPreferences } from "@/lib/api";
+import type { UserPreferences } from "@/lib/api";
 import { createClient } from "@/lib/supabase/server";
 import PreferencesForm from "@/features/settings/components/PreferencesForm";
+
+const EMPTY_PREFERENCES: UserPreferences = {
+  user_id: "",
+  interest_tags: null,
+  dietary: null,
+  budget: null,
+  custom_notes: null,
+};
 
 export default async function PreferencesPage() {
   const supabase = await createClient();
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
 
-  if (!user) {
+  if (!session) {
     redirect("/login");
   }
 
-  return (
-    <div className="mx-auto w-full max-w-2xl space-y-6 p-6 md:p-10">
-      <div className="space-y-1.5">
-        <h1 className="text-display-xl">Travel preferences</h1>
-        <p className="text-sm text-ink-subtle">
-          These tune what the AI suggests. Fewer generic museum stops, more things you actually like.
-        </p>
-      </div>
-      <PreferencesForm />
-    </div>
-  );
+  let preferences: UserPreferences;
+  try {
+    preferences = await getPreferences(session.access_token);
+  } catch {
+    preferences = { ...EMPTY_PREFERENCES, user_id: session.user.id };
+  }
+
+  return <PreferencesForm initialPreferences={preferences} />;
 }

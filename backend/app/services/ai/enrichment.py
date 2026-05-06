@@ -11,8 +11,8 @@ from app.db import get_supabase_client
 from app.services.ai.llm import call_structured, stream_structured
 from app.services.ai.schemas import EnrichmentResponse
 from app.services.places.country_codes import resolve_country_code
-from app.services.places.geocoding import geocode_with_validation, resolve_timezone
-from app.services.places.images import fetch_wikipedia_image
+from app.services.places.geocoding import geocode_with_fallbacks, resolve_timezone
+from app.services.places.images import fetch_pexels_image
 from app.services.places.repository import (
     get_place_by_slug,
     resolve_slug_alias,
@@ -33,7 +33,7 @@ SEARCH_QUERY_TEMPLATES = {
     "activity":   "{name} {destination} activity price booking tips",
 }
 
-STABLE_FIELDS = ["canonical_name", "description", "location", "image_url"]
+STABLE_FIELDS = ["canonical_name", "description", "location"]
 
 FRESH_FIELDS = {
     "attraction": ["opening_hours", "price_range", "tips"],
@@ -48,6 +48,15 @@ FRESH_FIELDS = {
 
 LEADING_ARTICLE_RE = re.compile(r"^(the|a|an)\s+", re.IGNORECASE)
 
+NAME_TOKEN_STOPWORDS = {
+    "the", "a", "an", "and", "of", "in", "at", "on",
+    "le", "la", "les", "l", "du", "de", "des", "d",
+    "el", "il", "lo", "gli", "los", "las", "y",
+    "der", "die", "das", "den", "dem", "und",
+    "hotel", "hotels", "restaurant", "restaurants", "cafe",
+    "bar", "tavern", "inn", "lodge", "resort", "motel",
+}
+
 
 def build_cache_key(name: str, destination: str, item_type: str) -> str:
     """Generate a deterministic slug keyed on name + destination + type.
@@ -59,6 +68,23 @@ def build_cache_key(name: str, destination: str, item_type: str) -> str:
     raw = f"{normalized_name} {destination}".lower()
     slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
     return f"{slug}-{item_type}"
+
+
+def names_share_significant_token(a: str, b: str) -> bool:
+    """Return True if two names share at least one significant token.
+
+    Used to detect when the LLM substitutes a different establishment for the
+    user's input (e.g. "Hotel Lutetia" → "Les Botanistes"). Stop words like
+    "hotel", "the", "le" are dropped before comparison so a true canonical
+    expansion ("Hilton" → "Hilton Paris Opera") still matches on the brand
+    token.
+    """
+    def significant_tokens(s: str) -> set[str]:
+        return {
+            t for t in re.split(r"[^a-z0-9]+", s.lower())
+            if t and t not in NAME_TOKEN_STOPWORDS
+        }
+    return bool(significant_tokens(a) & significant_tokens(b))
 
 
 # ── Cache layer ───────────────────────────────────────────────────────────────
@@ -124,9 +150,13 @@ async def search_item(name: str, destination: str, item_type: str, *, deep: bool
     context_parts: list[str] = []
     if response.get("answer"):
         context_parts.append(response["answer"])
-    for r in results:
-        if r.get("content"):
-            context_parts.append(r["content"])
+    for r in results[:3]:
+        content = r.get("content")
+        if not content:
+            continue
+        snippet = content[:300] if len(content) > 300 else content
+        title = r.get("title")
+        context_parts.append(f"{title}: {snippet}" if title else snippet)
 
     return "\n\n".join(context_parts)
 
@@ -145,8 +175,10 @@ Destination: {destination}
 Search results:
 {search_context}
 
-Extract: canonical_name, description, location (specific street address with number OR named area — never just the city), image_url, and these type-specific fields when known: {fresh}.
-Set any field to null when the search results do not support a confident answer. Never invent facts."""
+Extract: canonical_name, description, location (specific street address with number OR named area — never just the city), and these type-specific fields when known: {fresh}.
+canonical_name MUST refer to the same {item_type} as the input Name above. You may correct spelling or add an official brand prefix/suffix (e.g. "Hilton" → "Hilton Paris Opera", "Hotel Lutetia" → "Mandarin Oriental Lutetia"), but never substitute a different establishment.
+List fields must contain unique items only, no duplicates, at most 10 entries.
+Set any field to null when the search results do not support a confident answer. Never invent facts. Do not output an image URL — image lookup is handled outside the LLM."""
 
 
 async def enrich_with_llm(name: str, destination: str, item_type: str, search_context: str) -> dict:
@@ -161,6 +193,13 @@ async def enrich_with_llm(name: str, destination: str, item_type: str, search_co
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 
+# Per-process single-flight registry: concurrent callers with the same raw
+# slug await the same Task instead of duplicating Tavily + LLM work. The
+# typical race is a background suggestion-enrichment batch and an Add-button
+# click both landing on the same item within seconds.
+INFLIGHT: dict[str, asyncio.Task[dict]] = {}
+
+
 async def get_place_data(name: str, destination: str, item_type: str) -> dict:
     """Unified lookup: slug_aliases → ai_attraction_cache → places → LLM fallback.
 
@@ -168,6 +207,20 @@ async def get_place_data(name: str, destination: str, item_type: str) -> dict:
     """
     raw_slug = build_cache_key(name, destination, item_type)
 
+    existing = INFLIGHT.get(raw_slug)
+    if existing is not None and not existing.done():
+        logger.info("Single-flight: awaiting in-flight enrichment for %s", raw_slug)
+        return await existing
+
+    task = asyncio.create_task(compute_place_data(raw_slug, name, destination, item_type))
+    INFLIGHT[raw_slug] = task
+    task.add_done_callback(
+        lambda t: INFLIGHT.pop(raw_slug, None) if INFLIGHT.get(raw_slug) is t else None
+    )
+    return await task
+
+
+async def compute_place_data(raw_slug: str, name: str, destination: str, item_type: str) -> dict:
     canonical_slug = await resolve_slug_alias(raw_slug)
     lookup_slug = canonical_slug if canonical_slug else raw_slug
 
@@ -187,6 +240,18 @@ async def get_place_data(name: str, destination: str, item_type: str) -> dict:
     data = await enrich_with_llm(name, destination, item_type, search_context)
 
     canonical_name = data.get("canonical_name") or name
+    if not names_share_significant_token(name, canonical_name):
+        logger.warning(
+            "LLM substituted entity for %r → %r — discarding LLM enrichment, falling back to input name",
+            name, canonical_name,
+        )
+        canonical_name = name
+        data["canonical_name"] = name
+        data["description"] = None
+        data["location"] = None
+        data["categories"] = None
+        for fresh_field in FRESH_FIELDS[item_type]:
+            data[fresh_field] = None
     canonical_slug = build_cache_key(canonical_name, destination, item_type)
 
     existing_cache = await get_cached_attraction(canonical_slug)
@@ -197,22 +262,39 @@ async def get_place_data(name: str, destination: str, item_type: str) -> dict:
             return {**stable, **existing_cache, "place_id": stable.get("id")}
         return existing_cache
 
+    existing_place = await get_place_by_slug(canonical_slug, item_type)
+    if existing_place is not None:
+        # Stable fields (image_url, lat/lng, timezone) already known —
+        # only refresh the volatile cache; skip Pexels and Nominatim.
+        fresh_data = {k: data[k] for k in FRESH_FIELDS[item_type] if k in data}
+        try:
+            await store_attraction_cache(canonical_slug, fresh_data)
+        except Exception as exc:
+            logger.warning("Cache write failed for key %s: %s", canonical_slug, exc)
+        await store_slug_alias(raw_slug, canonical_slug)
+        return {**existing_place, **fresh_data, "place_id": existing_place.get("id")}
+
     country_code = resolve_country_code(destination)
-    destination_tokens = [t.strip().lower() for t in destination.split(",") if t.strip()]
-    location_query = data.get("location") or canonical_name
-    geo, wiki_image = await asyncio.gather(
-        geocode_with_validation(
-            f"{location_query}, {destination}",
+    location_query = data.get("location")
+    geo, image_url = await asyncio.gather(
+        geocode_with_fallbacks(
+            canonical_name,
+            destination,
             country_code=country_code,
-            destination_tokens=destination_tokens,
+            location_query=location_query,
         ),
-        fetch_wikipedia_image(canonical_name, destination),
+        fetch_pexels_image(canonical_name, destination),
     )
-    data["lat"] = geo.lat if geo else None
-    data["lng"] = geo.lng if geo else None
-    data["timezone"] = resolve_timezone(geo.lat, geo.lng) if geo else None
-    if wiki_image:
-        data["image_url"] = wiki_image
+    final_lat: float | None = geo.lat if geo is not None else None
+    final_lng: float | None = geo.lng if geo is not None else None
+    data["lat"] = final_lat
+    data["lng"] = final_lng
+    data["timezone"] = (
+        resolve_timezone(final_lat, final_lng)
+        if final_lat is not None and final_lng is not None
+        else None
+    )
+    data["image_url"] = image_url
 
     stable_payload = {
         "slug": canonical_slug,
@@ -289,51 +371,77 @@ async def stream_place_data(name: str, destination: str, item_type: str):
 
     data = final.model_dump(mode="json", exclude_none=False)
     canonical_name = data.get("canonical_name") or name
+    if not names_share_significant_token(name, canonical_name):
+        logger.warning(
+            "LLM substituted entity for %r → %r — discarding LLM enrichment, falling back to input name",
+            name, canonical_name,
+        )
+        canonical_name = name
+        data["canonical_name"] = name
+        data["description"] = None
+        data["location"] = None
+        data["categories"] = None
+        for fresh_field in FRESH_FIELDS[item_type]:
+            data[fresh_field] = None
     canonical_slug_final = build_cache_key(canonical_name, destination, item_type)
 
     existing_cache = await get_cached_attraction(canonical_slug_final)
     if existing_cache is None:
-        country_code = resolve_country_code(destination)
-        destination_tokens = [t.strip().lower() for t in destination.split(",") if t.strip()]
-        location_query = data.get("location") or canonical_name
-        geo, wiki_image = await asyncio.gather(
-            geocode_with_validation(
-                f"{location_query}, {destination}",
-                country_code=country_code,
-                destination_tokens=destination_tokens,
-            ),
-            fetch_wikipedia_image(canonical_name, destination),
-        )
-        lat = geo.lat if geo else None
-        lng = geo.lng if geo else None
-        tz = resolve_timezone(geo.lat, geo.lng) if geo else None
-        image_url = wiki_image or data.get("image_url")
+        existing_place = await get_place_by_slug(canonical_slug_final, item_type)
+        if existing_place is not None:
+            place_id = existing_place.get("id")
+            if place_id is not None:
+                yield {"field": "place_id", "value": place_id}
+            for field in ("image_url", "lat", "lng", "timezone"):
+                value = existing_place.get(field)
+                if value is not None:
+                    yield {"field": field, "value": value}
+            fresh_data = {k: data[k] for k in FRESH_FIELDS[item_type] if k in data}
+            try:
+                await store_attraction_cache(canonical_slug_final, fresh_data)
+            except Exception as exc:
+                logger.warning("Cache write failed for key %s: %s", canonical_slug_final, exc)
+        else:
+            country_code = resolve_country_code(destination)
+            location_query = data.get("location")
+            geo, image_url = await asyncio.gather(
+                geocode_with_fallbacks(
+                    canonical_name,
+                    destination,
+                    country_code=country_code,
+                    location_query=location_query,
+                ),
+                fetch_pexels_image(canonical_name, destination),
+            )
+            lat: float | None = geo.lat if geo is not None else None
+            lng: float | None = geo.lng if geo is not None else None
+            tz = resolve_timezone(lat, lng) if lat is not None and lng is not None else None
 
-        upserted = await upsert_place({
-            "slug": canonical_slug_final,
-            "item_type": item_type,
-            "name": canonical_name,
-            "destination": destination,
-            "description": data.get("description"),
-            "location": data.get("location"),
-            "image_url": image_url,
-            "lat": lat,
-            "lng": lng,
-            "timezone": tz,
-            "categories": data.get("categories"),
-        })
-        if upserted and upserted.get("id"):
-            yield {"field": "place_id", "value": upserted["id"]}
-        for field, value in (("lat", lat), ("lng", lng), ("timezone", tz)):
-            if value is not None:
-                yield {"field": field, "value": value}
-        if wiki_image:
-            yield {"field": "image_url", "value": wiki_image}
+            upserted = await upsert_place({
+                "slug": canonical_slug_final,
+                "item_type": item_type,
+                "name": canonical_name,
+                "destination": destination,
+                "description": data.get("description"),
+                "location": data.get("location"),
+                "image_url": image_url,
+                "lat": lat,
+                "lng": lng,
+                "timezone": tz,
+                "categories": data.get("categories"),
+            })
+            if upserted and upserted.get("id"):
+                yield {"field": "place_id", "value": upserted["id"]}
+            for field, value in (("lat", lat), ("lng", lng), ("timezone", tz)):
+                if value is not None:
+                    yield {"field": field, "value": value}
+            if image_url:
+                yield {"field": "image_url", "value": image_url}
 
-        fresh_data = {k: data[k] for k in FRESH_FIELDS[item_type] if k in data}
-        try:
-            await store_attraction_cache(canonical_slug_final, fresh_data)
-        except Exception as exc:
-            logger.warning("Cache write failed for key %s: %s", canonical_slug_final, exc)
+            fresh_data = {k: data[k] for k in FRESH_FIELDS[item_type] if k in data}
+            try:
+                await store_attraction_cache(canonical_slug_final, fresh_data)
+            except Exception as exc:
+                logger.warning("Cache write failed for key %s: %s", canonical_slug_final, exc)
 
     await store_slug_alias(raw_slug, canonical_slug_final)

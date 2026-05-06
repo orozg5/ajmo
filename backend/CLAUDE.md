@@ -4,28 +4,31 @@
 
 - FastAPI with `async def` for all routes.
 - All routes in `app/routes/`, one file per domain; route handlers named `{action}_{noun}_route` (e.g., `create_plan_route`, `autocomplete_places_route`).
-- All business logic in `app/services/`, organized by domain: `ai/`, `places/`, `plans/`, `users/`, `social/`, `storage/`, `collab/`.
+- All business logic in `app/services/`, organized by domain: `ai/`, `places/`, `plans/`, `users/`, `social/`, `storage/`, `collab/`, `transit/` (Transitous public-transit MOTIS), `transport/` (FOSSGIS OSRM walk/bike/drive + haversine flight estimator).
 - Supabase client: import `get_supabase_client()` from `app/db.py` — never call `create_client()` directly; variable always named `supabase` in service files.
 - Shared constants and shared validators in `app/constants.py` — `VALID_ITEM_TYPES` and `validate_item_type()` live here; import from there, never duplicate.
 - Shared LLM utilities in `app/services/ai/llm.py` — `call_structured[ModelT](feature, schema, prompt, temperature, max_tokens)` is the single entry point. Never reimplement or hand-parse LLM output.
-- Shared Pydantic response models for AI in `app/services/ai/schemas.py` — `EnrichmentResponse`, `SuggestionsResponse`, `TransportResponse` etc. All LLM calls use `.with_structured_output(...)`.
+- Shared Pydantic response models for AI in `app/services/ai/schemas.py` — `EnrichmentResponse`, `SuggestionsResponse` etc. All LLM calls use `.with_structured_output(...)`.
 - Shared enrichment orchestrator: `app/services/ai/enrichment.py` — `get_place_data(name, destination, item_type)` is the single entry point; never reimplement inline.
-- Pydantic schemas in `app/schemas/`, one file per domain. Request models prefixed by domain (`PlanCreate`, `DestinationCreate`). Response models end in `Response` (`PlanResponse`, `AiSuggestionItemResponse`). All route handlers must declare a typed return annotation.
+- Pydantic schemas in `app/schemas/`, one file per domain. Request models prefixed by domain (`PlanCreate`, `DestinationCreate`, `DestinationUpdate`). Response models end in `Response` (`PlanResponse`, `AiSuggestionItemResponse`, `TransitDirectionsResponse`, `OsrmRouteResponse`). All route handlers must declare a typed return annotation.
 - `item_type` validation: call `validate_item_type()` from `app/constants.py` via a `@field_validator` on the schema — never validate inline in route handlers.
-- Config: `pydantic_settings.BaseSettings` in `app/config.py`. **All AI-related env vars are required** (`AI_MODEL`, `FALLBACK_AI_MODEL`, `OLLAMA_MODEL`, `OLLAMA_BASE_URL`, `OLLAMA_KEEP_ALIVE`, `OLLAMA_NUM_CTX`, `OLLAMA_REASONING`, and the three per-feature chains `AI_PROVIDER_CHAIN_ENRICH`, `AI_PROVIDER_CHAIN_SUGGESTIONS`, `AI_PROVIDER_CHAIN_TRANSPORT`). No global `AI_PROVIDER_CHAIN`. Never add defaults — documented in `.env.example` only.
+- Config: `pydantic_settings.BaseSettings` in `app/config.py`. **All AI-related env vars are required** (`AI_MODEL`, `FALLBACK_AI_MODEL`, `OLLAMA_MODEL`, `OLLAMA_BASE_URL`, `OLLAMA_KEEP_ALIVE`, `OLLAMA_NUM_CTX`, `OLLAMA_REASONING`, `OLLAMA_REPEAT_PENALTY`, and the two per-feature chains `AI_PROVIDER_CHAIN_ENRICH`, `AI_PROVIDER_CHAIN_SUGGESTIONS`). No global `AI_PROVIDER_CHAIN`. Cross-city transport is not LLM-driven so has no chain. Image source is required: `PEXELS_API_KEY`. Geocoder/Transitous identity: `GEOCODER_USER_AGENT`. Never add defaults — documented in `.env.example` only.
 - Services return `None` for not-found; route handlers raise `HTTPException(404)` — never raise HTTP exceptions from service files.
 - Error pattern in routes: `ValueError → 422`, uncaught `Exception → 500` with `logger.exception()`.
-- Router tags: one distinct tag per route file — `"plans"`, `"days"`, `"items"`, `"destinations"`, `"places"`, `"ai"`, `"users"`, `"social"`, `"storage"`, `"internal"`.
+- Specialized errors: `services/plans/days.py:DateShrinkBlocked` (subclasses `ValueError`) is raised when a plan's date-range change would drop days that hold items; route handlers translate it to `409 Conflict`.
+- Router tags: one distinct tag per route file — `"plans"`, `"days"`, `"items"`, `"destinations"`, `"places"`, `"ai"`, `"users"`, `"social"`, `"storage"`, `"transit"`, `"internal"`.
 - Type hints: `X | None` union syntax (Python 3.10+) — never `Optional[X]`.
 - No underscore-prefixed names — module privacy is enforced by not importing, not by naming convention.
 - `model_dump(mode="json")` required on Pydantic date fields before passing to supabase-py.
 - `.limit(1).execute()` for single-row queries — not `.maybe_single()`.
 - Supabase is accessed via `service_role` key (bypasses RLS intentionally).
 - Background cache cleanup: `app/services/places/cleanup.py` — `start_cache_cleanup()` called in `main.py` on startup; runs every 6 hours.
+- Lazy HTTP-client teardown in `main.py` lifespan: `close_geocoder_client()`, `close_transit_client()`, `close_osrm_client()` — every backend-internal external HTTP client owns a module-level `httpx.AsyncClient` and an idempotent close hook registered here.
+- Suggestions pipeline (`services/ai/suggestions.py`): `enrich_suggestion_metadata` returns `cached: bool` so the frontend can skip the background `/ai/enrich-batch` call for permanent-cache hits; `top_up_suggestions` keeps the strip at `TARGET_SUGGESTION_COUNT = 5` after dismissals.
 
 ## Streaming
 
-- SSE endpoints: `/ai/suggestions/stream`, `/ai/enrich/stream`, `/ai/transport-suggestions/stream`.
+- SSE endpoints: `/ai/suggestions/stream`, `/ai/enrich/stream`, `/ai/transport-suggestions/stream`. The transport stream is no longer LLM-driven — it streams cross-city pairs as the multi-source orchestrator (`services/transport/cross_city.py`) finishes each pair's parallel API fan-out.
 - Use `fastapi.responses.StreamingResponse` with `text/event-stream`.
 - Yield `event: <name>\ndata: <json>\n\n` frames from a generator. Handle client disconnect via `request.is_disconnected()`.
 
@@ -59,7 +62,7 @@ Volatile fields per item type (price_range, opening_hours, amenities, check_in_t
 
 ### LLM provider routing (per feature, env-driven)
 
-- Three required env vars, each a comma-separated provider list: `AI_PROVIDER_CHAIN_ENRICH`, `AI_PROVIDER_CHAIN_SUGGESTIONS`, `AI_PROVIDER_CHAIN_TRANSPORT`.
+- Two required env vars, each a comma-separated provider list: `AI_PROVIDER_CHAIN_ENRICH`, `AI_PROVIDER_CHAIN_SUGGESTIONS`. Cross-city transport is API-driven (OSRM + Transitous + haversine flight estimator) and registers no chain.
 - No global fallback. Unknown feature names (typos in `call_structured(feature=...)`) raise `ValueError`; missing envs fail `Settings()` at boot.
 - Dev default in `.env.example`: all three are `ollama`. Prod flips them to cloud chains (e.g. `gemini,groq`).
 - Mid-chain fallback fires only on `is_quota_error()` (429, 503, RESOURCE_EXHAUSTED, RATE_LIMIT, QUOTA). Validation errors (Pydantic `ValidationError`) propagate immediately — we want schema mismatches visible, not masked.
@@ -92,7 +95,8 @@ Volatile fields per item type (price_range, opening_hours, amenities, check_in_t
 | Place autocomplete | `routes/places.py` | `services/places/repository.py` |
 | AI enrichment (`/ai/enrich`, `/ai/enrich/stream`, `/ai/enrich-batch`) | `routes/ai.py` | `services/ai/enrichment.py` |
 | AI suggestions (`/ai/suggestions`, `/ai/suggestions/stream`, `/ai/suggestions/next`) | `routes/ai.py` | `services/ai/suggestions.py` |
-| Transport suggestions (`/ai/transport-suggestions/*`) | `routes/ai.py` | `services/ai/transport.py` |
+| Transport suggestions (`/ai/transport-suggestions/cross-city`, `/ai/transport-suggestions/stream`) | `routes/ai.py` | `services/ai/transport.py` (cache + pair graph via `transport_pairs.py`) → `services/transport/cross_city.py` (multi-source orchestrator) → `services/transit/directions.py` (Transitous train/bus/ferry), `services/transport/osrm.py` (OSRM driving), `services/transport/flight_estimator.py` (haversine + cruise) |
+| Same-day routing (`/transit/directions`, `/transit/osrm-route`) | `routes/transit.py` | `services/transit/directions.py` (Transitous public-transit), `services/transport/osrm.py` (FOSSGIS OSRM, walk/bike/drive profiles) |
 | User preferences | `routes/users.py` | `services/users/preferences.py` |
 | Friends | `routes/social.py` | `services/social/friends.py` |
 | Invites | `routes/social.py` | `services/social/invites.py` |

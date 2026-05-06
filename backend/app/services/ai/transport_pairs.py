@@ -1,8 +1,8 @@
 """Pair-graph construction for transport suggestions.
 
-Pure functions — no Supabase, no LLM. Given the days/destinations graph, these
-helpers produce the source→destination item pairs that the LLM is asked to
-annotate with transport options.
+Pure functions — no Supabase, no LLM, no geocoding. Given the days/destinations
+graph, these helpers produce source→destination item pairs that the cross-city
+orchestrator annotates with real-routing options.
 """
 import logging
 
@@ -30,69 +30,32 @@ def resolve_item_location(item: dict, destinations_map: dict[str, dict]) -> str:
     return city_country or "Unknown location"
 
 
+def resolve_item_coordinates(item: dict) -> tuple[float | None, float | None]:
+    """Read (lat, lng) from a hydrated item's ai_data; (None, None) when absent.
+
+    Sentinel items (cities with no real items) have no place_id and therefore no
+    coordinates here — the orchestrator geocodes the city name as a fallback.
+    """
+    ai_data = item.get("ai_data") or {}
+    if not isinstance(ai_data, dict):
+        return None, None
+    lat = ai_data.get("lat")
+    lng = ai_data.get("lng")
+    if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+        return float(lat), float(lng)
+    return None, None
+
+
 def pair_key(pair: dict) -> str:
-    """Stable key for a pair dict.
+    """Stable key for a pair dict, keyed by `(source_destination_id, destination_destination_id)`.
 
-    Item-id keyed when both endpoints have a real id; city-name keyed when
-    either is a sentinel (id is None) — city names are pulled from the pair's
-    `source_city` / `destination_city` so the key stays consistent with
-    `suggestion_pair_key` on cache reads. This prevents None->None collisions
-    across independent sentinel pairs.
+    Destination ids are the only stable identity here: real items and sentinels
+    both carry one, and the value does not change when the user reorders items
+    within a city (which would silently break an item-id-keyed dedup).
     """
-    src = pair["source_item"]
-    dst = pair["destination_item"]
-    src_id = src.get("id")
-    dst_id = dst.get("id")
-    if src_id and dst_id:
-        return f"{src_id}->{dst_id}"
-    src_key = pair.get("source_city") or src.get("title")
-    dst_key = pair.get("destination_city") or dst.get("title")
-    return f"city:{src_key}->city:{dst_key}"
-
-
-def build_same_day_pairs(
-    day_id: str,
-    all_days: list[dict],
-    destinations_map: dict[str, dict],
-) -> list[dict]:
-    """Day-walk pair builder: every adjacency in the day, tagged by scope.
-
-    - `same_day` when both items share a destination_id.
-    - `same_day_cross_city` when they differ (or either is missing a destination).
-    Transport items are excluded from the walk.
-    """
-    target_day = next((d for d in all_days if d["id"] == day_id), None)
-    if not target_day:
-        return []
-
-    items = sorted(
-        [i for i in target_day.get("items", []) if i.get("item_type") != "transport"],
-        key=lambda i: i.get("sort_order") or 0,
-    )
-
-    pairs = []
-    for i in range(len(items) - 1):
-        src = items[i]
-        dst = items[i + 1]
-        src_dest = destinations_map.get(src.get("destination_id"))
-        dst_dest = destinations_map.get(dst.get("destination_id"))
-        same_dest = (
-            src.get("destination_id") is not None
-            and src.get("destination_id") == dst.get("destination_id")
-        )
-        scope = "same_day" if same_dest else "same_day_cross_city"
-        pairs.append({
-            "source_item": src,
-            "destination_item": dst,
-            "scope": scope,
-            "source_city": src_dest["city"] if src_dest else None,
-            "destination_city": dst_dest["city"] if dst_dest else None,
-            "source_country": src_dest["country"] if src_dest else None,
-            "destination_country": dst_dest["country"] if dst_dest else None,
-            "source_day_number": target_day["day_number"],
-            "destination_day_number": target_day["day_number"],
-        })
-    return pairs
+    src_dest_id = pair["source_item"].get("destination_id")
+    dst_dest_id = pair["destination_item"].get("destination_id")
+    return f"{src_dest_id}->{dst_dest_id}"
 
 
 def last_day_for_dest(dest: dict) -> int | None:
@@ -167,6 +130,8 @@ def build_cross_city_pairs(
             )
             continue
 
+        src_lat, src_lng = resolve_item_coordinates(src_item)
+        dst_lat, dst_lng = resolve_item_coordinates(dst_item)
         pairs.append({
             "source_item": src_item,
             "destination_item": dst_item,
@@ -177,5 +142,9 @@ def build_cross_city_pairs(
             "destination_country": dst_dest["country"],
             "source_day_number": src_day,
             "destination_day_number": dst_day,
+            "source_lat": src_lat,
+            "source_lng": src_lng,
+            "destination_lat": dst_lat,
+            "destination_lng": dst_lng,
         })
     return pairs

@@ -4,30 +4,33 @@ import { useCallback, useMemo, useState } from "react";
 
 import {
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   PointerSensor,
   closestCenter,
+  defaultDropAnimationSideEffects,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { Loader2, Map as MapIcon, Train } from "lucide-react";
+import { Map as MapIcon, Train } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer";
 import { type DestinationResponse, type Plan, type PlanDay, type PlanItem } from "@/lib/api";
 import { usePlanItinerary } from "@/features/plans/hooks/usePlanItinerary";
-import { useDayTransport } from "@/features/plans/hooks/useDayTransport";
+import { useSameDayTransportInsert } from "@/features/plans/hooks/useSameDayTransportInsert";
 import { useCrossCityTransport } from "@/features/plans/hooks/useCrossCityTransport";
 import { useHotels } from "@/features/plans/hooks/useHotels";
 import PlanMap from "@/features/map/PlanMap";
 import { dragEndToReorderEntry } from "@/features/plans/utils/dragEndToReorderEntry";
-import { hasPendingWithinDayPairs } from "@/features/plans/utils/transportPairs";
 import CrossCityTransportPanel from "@/features/plans/components/transport/CrossCityTransportPanel";
 import DayNotesEditor from "@/features/plans/components/itinerary/DayNotesEditor";
-import DaySidebar from "@/features/plans/components/itinerary/DaySidebar";
+import DayTabs from "@/features/plans/components/itinerary/DayTabs";
 import DayView from "@/features/plans/components/itinerary/DayView";
+import DragOverlayCard from "@/features/plans/components/itinerary/DragOverlayCard";
 import SuggestionsStrip from "@/features/plans/components/search/SuggestionsStrip";
 import BookStayDialog from "@/features/plans/components/hotels/BookStayDialog";
 import StaysStrip from "@/features/plans/components/hotels/StaysStrip";
@@ -41,7 +44,6 @@ interface Props {
 export default function ItineraryPlanner({ plan, initialDays, destinations }: Props) {
   const {
     days,
-    addDay,
     removeDay,
     addItem,
     removeItem,
@@ -56,13 +58,14 @@ export default function ItineraryPlanner({ plan, initialDays, destinations }: Pr
   const [editingHotelId, setEditingHotelId] = useState<string | null>(null);
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
   const [isMapDrawerOpen, setIsMapDrawerOpen] = useState(false);
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
 
-  const dayTransportHook = useDayTransport({ planId: plan.id });
+  const sameDayTransport = useSameDayTransportInsert({ addItem });
   const crossCityTransportHook = useCrossCityTransport({ planId: plan.id });
   const hotels = useHotels(plan.id);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
@@ -78,11 +81,6 @@ export default function ItineraryPlanner({ plan, initialDays, destinations }: Pr
     }
     return map;
   }, [days]);
-
-  async function handleAddDay() {
-    const newDay = await addDay();
-    setActiveDayId(newDay.id);
-  }
 
   function handleRemoveDay(dayId: string) {
     removeDay(dayId);
@@ -117,7 +115,12 @@ export default function ItineraryPlanner({ plan, initialDays, destinations }: Pr
     setIsMapDrawerOpen(false);
   }, [activeDayId, itemIndex]);
 
+  function handleDragStart(event: DragStartEvent) {
+    setActiveDragId(String(event.active.id));
+  }
+
   async function handleDragEnd(event: DragEndEvent) {
+    setActiveDragId(null);
     const result = dragEndToReorderEntry(event, itemIndex, days);
     if (!result) return;
 
@@ -126,31 +129,22 @@ export default function ItineraryPlanner({ plan, initialDays, destinations }: Pr
     } catch {
       return;
     }
-
-    // F1: Adjacency-based transport suggestions go stale after a reorder.
-    // Re-fetch only for days the user already opened, so we don't spontaneously
-    // spin up LLM calls for untouched days.
-    const affectedDayIds = new Set([result.sourceDayId, result.targetDayId]);
-    for (const dayId of affectedDayIds) {
-      if (dayTransportHook.hasFetched(dayId)) {
-        dayTransportHook.fetchForDay(dayId);
-      }
-    }
   }
+
+  function handleDragCancel() {
+    setActiveDragId(null);
+  }
+
+  const activeDragItem = activeDragId ? itemIndex.get(activeDragId) ?? null : null;
 
   if (days.length === 0) {
     return (
-      <div className="space-y-4">
-        <p className="text-sm text-muted-foreground">No days yet.</p>
-        <Button size="sm" onClick={handleAddDay} disabled={isLoading}>
-          + Add day
-        </Button>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        No days yet — set the trip dates in Settings to add days.
+      </p>
     );
   }
 
-  const activeDayState = activeDay ? dayTransportHook.getDayState(activeDay.id) : null;
-  const showGetTransport = activeDay ? hasPendingWithinDayPairs(activeDay, activeDayDestinations) : false;
   const activeDayHotels = activeDay
     ? hotels.hotels.filter(
         (h) =>
@@ -161,8 +155,15 @@ export default function ItineraryPlanner({ plan, initialDays, destinations }: Pr
 
   return (
     <>
-      <DndContext id="itinerary-planner" sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <div className="space-y-3">
+      <DndContext
+        id="itinerary-planner"
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
+      >
+        <div className="space-y-4">
           {destinations.length > 0 && (
             <SuggestionsStrip
               planId={plan.id}
@@ -173,31 +174,15 @@ export default function ItineraryPlanner({ plan, initialDays, destinations }: Pr
             />
           )}
 
-          {destinations.length > 1 &&
-            !(crossCityTransportHook.hasFetched && crossCityTransportHook.suggestions.length === 0) && (
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleOpenCrossCity}
-                  disabled={crossCityTransportHook.isLoading}
-                >
-                  <Train className="size-4" strokeWidth={1.5} />
-                  Cross-city transport
-                </Button>
-              </div>
-            )}
+          <DayTabs
+            days={days}
+            activeDayId={activeDay?.id ?? ""}
+            isLoading={isLoading}
+            onSelectDay={setActiveDayId}
+            onRemoveDay={handleRemoveDay}
+          />
 
-          <div className="grid gap-4 lg:grid-cols-[clamp(220px,16vw,320px)_minmax(0,1fr)_clamp(360px,24vw,560px)]">
-            <DaySidebar
-              days={days}
-              activeDayId={activeDay?.id ?? ""}
-              isLoading={isLoading}
-              onSelectDay={setActiveDayId}
-              onAddDay={handleAddDay}
-              onRemoveDay={handleRemoveDay}
-            />
-
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_clamp(440px,46vw,820px)]">
             {activeDay && (
               <div className="space-y-4">
                 <div className="flex items-start justify-between gap-3">
@@ -210,23 +195,6 @@ export default function ItineraryPlanner({ plan, initialDays, destinations }: Pr
                       <span className="ml-2 text-base font-normal text-ink-subtle">· {activeDay.title}</span>
                     ) : null}
                   </h2>
-                  <div className="flex items-center gap-2">
-                    {showGetTransport && activeDayState && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => dayTransportHook.fetchForDay(activeDay.id)}
-                        disabled={activeDayState.isLoading}
-                      >
-                        {activeDayState.isLoading ? (
-                          <Loader2 className="size-4 animate-spin" strokeWidth={1.5} />
-                        ) : (
-                          <Train className="size-4" strokeWidth={1.5} />
-                        )}
-                        Get transport
-                      </Button>
-                    )}
-                  </div>
                 </div>
 
                 <StaysStrip
@@ -257,37 +225,64 @@ export default function ItineraryPlanner({ plan, initialDays, destinations }: Pr
                   onAddItem={addItem}
                   onRemoveItem={removeItem}
                   onUpdateItemNotes={(itemId, notes) => updateItemNotes(activeDay.id, itemId, notes)}
-                  dayTransport={
-                    activeDayState
-                      ? {
-                          suggestions: activeDayState.suggestions,
-                          isFetching: activeDayState.isLoading,
-                          addingKeys: dayTransportHook.addingKeys,
-                          onAddTransportOption: (suggestion, optIdx, extra) =>
-                            dayTransportHook.addOption(suggestion, optIdx, activeDay.id, addItem, extra),
-                          transportPositions: dayTransportHook.transportPositions,
-                        }
-                      : undefined
-                  }
+                  dayTransport={{
+                    addingKeys: sameDayTransport.addingKeys,
+                    onAddTransportOption: (srcItem, dstItem, option) =>
+                      sameDayTransport.addMode({
+                        srcItem,
+                        dstItem,
+                        dayId: activeDay.id,
+                        option,
+                      }),
+                  }}
                   highlightedItemId={highlightedItemId}
                   onItemHoverChange={handleItemHoverChange}
                 />
               </div>
             )}
 
-            <aside className="hidden lg:block lg:sticky lg:top-4 lg:h-[calc(100vh-2rem)]">
-              <PlanMap
-                days={days}
-                hotels={hotels.hotels}
-                activeDayId={activeDayId}
-                destinations={destinations}
-                highlightedItemId={highlightedItemId}
-                onItemHover={handleItemHover}
-                onItemClick={handleMarkerClick}
-              />
+            <aside className="hidden lg:flex lg:sticky lg:top-4 lg:h-[calc(100vh-2rem)] lg:flex-col lg:gap-3">
+              {destinations.length > 1 && (
+                <button
+                  type="button"
+                  onClick={handleOpenCrossCity}
+                  disabled={crossCityTransportHook.isLoading}
+                  className="flex cursor-pointer items-center gap-3 rounded-xl border border-primary/40 bg-primary/10 p-3 text-left transition-colors hover:border-primary/60 hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary">
+                    <Train className="size-5" strokeWidth={1.75} />
+                  </span>
+                  <span className="flex flex-col">
+                    <span className="text-sm font-semibold text-ink">Cross-city transport</span>
+                    <span className="text-xs text-ink-subtle">Plan how you'll get between cities</span>
+                  </span>
+                </button>
+              )}
+              <div className="min-h-0 flex-1">
+                <PlanMap
+                  days={days}
+                  hotels={hotels.hotels}
+                  activeDayId={activeDayId}
+                  destinations={destinations}
+                  highlightedItemId={highlightedItemId}
+                  onItemHover={handleItemHover}
+                  onItemClick={handleMarkerClick}
+                />
+              </div>
             </aside>
           </div>
         </div>
+        <DragOverlay
+          dropAnimation={{
+            duration: 220,
+            easing: "cubic-bezier(0.18, 0.67, 0.6, 1.22)",
+            sideEffects: defaultDropAnimationSideEffects({
+              styles: { active: { opacity: "0.4" } },
+            }),
+          }}
+        >
+          {activeDragItem ? <DragOverlayCard item={activeDragItem} /> : null}
+        </DragOverlay>
       </DndContext>
 
       <Drawer open={isMapDrawerOpen} onOpenChange={setIsMapDrawerOpen}>
@@ -305,16 +300,34 @@ export default function ItineraryPlanner({ plan, initialDays, destinations }: Pr
           <DrawerHeader>
             <DrawerTitle>Map</DrawerTitle>
           </DrawerHeader>
-          <div className="flex-1 overflow-hidden px-4 pb-4">
-            <PlanMap
-              days={days}
-              hotels={hotels.hotels}
-              activeDayId={activeDayId}
-              destinations={destinations}
-              highlightedItemId={highlightedItemId}
-              onItemHover={handleItemHover}
-              onItemClick={handleMarkerClick}
-            />
+          <div className="flex flex-1 flex-col gap-3 overflow-hidden px-4 pb-4">
+            {destinations.length > 1 && (
+              <button
+                type="button"
+                onClick={handleOpenCrossCity}
+                disabled={crossCityTransportHook.isLoading}
+                className="flex items-center gap-3 rounded-xl border border-primary/40 bg-primary/10 p-3 text-left transition-colors hover:border-primary/60 hover:bg-primary/15 disabled:opacity-60"
+              >
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary">
+                  <Train className="size-5" strokeWidth={1.75} />
+                </span>
+                <span className="flex flex-col">
+                  <span className="text-sm font-semibold text-ink">Cross-city transport</span>
+                  <span className="text-xs text-ink-subtle">Plan how you'll get between cities</span>
+                </span>
+              </button>
+            )}
+            <div className="min-h-0 flex-1">
+              <PlanMap
+                days={days}
+                hotels={hotels.hotels}
+                activeDayId={activeDayId}
+                destinations={destinations}
+                highlightedItemId={highlightedItemId}
+                onItemHover={handleItemHover}
+                onItemClick={handleMarkerClick}
+              />
+            </div>
           </div>
         </DrawerContent>
       </Drawer>

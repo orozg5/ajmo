@@ -1,6 +1,7 @@
 import { useState } from "react";
 
-export interface LocalDestination {
+export interface DestinationRow {
+  id: string;
   country: string;
   city: string;
   dayNumbers: number[];
@@ -30,83 +31,81 @@ export function computeAvailableDays(dateFrom: string, dateTo: string): DayOptio
   return days;
 }
 
-function parseDayInput(input: string): number[] {
+export function parseDayInput(input: string): number[] {
   return input
     .split(",")
     .map((s) => parseInt(s.trim(), 10))
     .filter((n) => !isNaN(n) && n > 0);
 }
 
-export interface UseDestinationsReturn {
-  destinations: LocalDestination[];
-  country: string;
-  city: string;
-  checkedDays: number[];
-  toggleDay: (dayValue: number) => void;
-  dayInput: string;
-  addError: string;
-  handleFieldChange: (field: "country" | "city" | "dayInput", value: string) => void;
-  addDestination: (dateFrom: string, dateTo: string) => boolean;
-  removeDestination: (index: number) => void;
+const UNSAVED_PREFIX = "new-";
+
+function makeUnsavedId(): string {
+  return `${UNSAVED_PREFIX}${crypto.randomUUID()}`;
 }
 
-export function useDestinations(): UseDestinationsReturn {
-  const [destinations, setDestinations] = useState<LocalDestination[]>([]);
-  const [country, setCountry] = useState("");
-  const [city, setCity] = useState("");
-  // checkedDays: used when date range is available (checkbox-based)
-  const [checkedDays, setCheckedDays] = useState<number[]>([]);
-  // dayInput: used when no date range (free text, comma-separated)
-  const [dayInput, setDayInput] = useState("");
-  const [addError, setAddError] = useState("");
+export function isUnsavedId(id: string): boolean {
+  return id.startsWith(UNSAVED_PREFIX);
+}
 
-  function handleFieldChange(field: "country" | "city" | "dayInput", value: string) {
-    if (field === "country") setCountry(value);
-    else if (field === "city") setCity(value);
-    else setDayInput(value);
+function emptyRow(): DestinationRow {
+  return { id: makeUnsavedId(), country: "", city: "", dayNumbers: [] };
+}
+
+export function destinationsForSubmit(rows: DestinationRow[]): DestinationRow[] {
+  return rows.filter((row) => row.country.trim() !== "" || row.city.trim() !== "");
+}
+
+export interface ValidationResult {
+  ok: boolean;
+  error?: string;
+}
+
+export function validateRowsForSubmit(rows: DestinationRow[]): ValidationResult {
+  const filled = destinationsForSubmit(rows);
+  if (filled.length === 0) {
+    return { ok: false, error: "Add at least one destination." };
+  }
+  const incomplete = filled.find(
+    (row) => row.country.trim() === "" || row.city.trim() === "",
+  );
+  if (incomplete) {
+    return { ok: false, error: "Each destination needs a country and a city." };
+  }
+  return { ok: true };
+}
+
+export interface UseDestinationsReturn {
+  rows: DestinationRow[];
+  addRow: () => void;
+  removeRow: (id: string) => void;
+  updateRow: (id: string, patch: Partial<Omit<DestinationRow, "id">>) => void;
+  resetRows: (rows: DestinationRow[]) => void;
+}
+
+export function useDestinations(initialRows?: DestinationRow[]): UseDestinationsReturn {
+  const [rows, setRows] = useState<DestinationRow[]>(
+    initialRows && initialRows.length > 0 ? initialRows : [emptyRow()],
+  );
+
+  function addRow() {
+    setRows((prev) => [...prev, emptyRow()]);
   }
 
-  function toggleDay(dayValue: number) {
-    setCheckedDays((prev) =>
-      prev.includes(dayValue) ? prev.filter((d) => d !== dayValue) : [...prev, dayValue],
-    );
+  function removeRow(id: string) {
+    setRows((prev) => {
+      const next = prev.filter((row) => row.id !== id);
+      return next.length === 0 ? [emptyRow()] : next;
+    });
   }
 
-  function addDestination(dateFrom: string, dateTo: string): boolean {
-    if (!country.trim() || !city.trim()) {
-      setAddError("Country and city are required.");
-      return false;
-    }
-    setAddError("");
-
-    const hasDates = !!(dateFrom && dateTo && computeAvailableDays(dateFrom, dateTo).length > 0);
-    const dayNumbers = hasDates ? [...checkedDays].sort((a, b) => a - b) : parseDayInput(dayInput);
-
-    setDestinations((prev) => [
-      ...prev,
-      { country: country.trim(), city: city.trim(), dayNumbers },
-    ]);
-    setCountry("");
-    setCity("");
-    setCheckedDays([]);
-    setDayInput("");
-    return true;
+  function updateRow(id: string, patch: Partial<Omit<DestinationRow, "id">>) {
+    setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   }
 
-  function removeDestination(index: number) {
-    setDestinations((prev) => prev.filter((_, i) => i !== index));
+  function resetRows(nextRows: DestinationRow[]) {
+    setRows(nextRows.length > 0 ? nextRows : [emptyRow()]);
   }
 
-  return {
-    destinations,
-    country,
-    city,
-    checkedDays,
-    toggleDay,
-    dayInput,
-    addError,
-    handleFieldChange,
-    addDestination,
-    removeDestination,
-  };
+  return { rows, addRow, removeRow, updateRow, resetRows };
 }

@@ -2,44 +2,44 @@ import { redirect } from "next/navigation";
 
 import { listPlans, type Plan } from "@/lib/api";
 import { createClient } from "@/lib/supabase/server";
+import { getProfileChrome } from "@/lib/supabase/profile";
 import DashboardSections from "@/features/plans/components/dashboard/DashboardSections";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
-  const [
-    {
-      data: { session },
-    },
-    {
-      data: { user },
-    },
-  ] = await Promise.all([supabase.auth.getSession(), supabase.auth.getUser()]);
+  // Middleware validates against the auth server; getSession() is local-only.
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
 
-  if (!session || !user) {
+  if (!session) {
     redirect("/login");
   }
 
+  const user = session.user;
   const token = session.access_token;
   const ownerPromise = listPlans("owner", token).catch(() => [] as Plan[]);
+  const memberPromise = listPlans("member", token).catch(() => [] as Plan[]);
   const publicPromise = listPlans("public", token).catch(() => [] as Plan[]);
+  const profilePromise = getProfileChrome(supabase, user.id);
 
-  const [initialOwnerPlans, initialPublicPlans] = await Promise.all([
+  const [initialOwnerPlans, initialMemberPlans, initialPublicPlans, profile] = await Promise.all([
     ownerPromise,
+    memberPromise,
     publicPromise,
+    profilePromise,
   ]);
 
-  const metadataDisplayName =
-    (user.user_metadata?.display_name as string | undefined) ?? null;
   const greetingName =
-    metadataDisplayName?.split(" ")[0] ??
+    profile.displayName?.split(" ")[0] ??
     user.email?.split("@")[0] ??
     null;
-  const greeting = greetingName ? `Welcome back, ${greetingName}.` : "Where next?";
 
   return (
     <DashboardSections
-      greeting={greeting}
+      greetingName={greetingName}
       initialOwnerPlans={initialOwnerPlans}
+      initialMemberPlans={initialMemberPlans}
       initialPublicPlans={initialPublicPlans}
     />
   );

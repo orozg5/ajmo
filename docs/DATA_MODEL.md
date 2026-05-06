@@ -41,9 +41,10 @@ See `supabase/schema.sql` for authoritative DDL. This file documents shape + int
 ### `plan_items`
 - `id, plan_id, day_id, added_by, item_type, title, notes, location, start_time`.
 - **NEW** `end_time time`, `duration_minutes int`.
-- **NEW** `sort_key text` — fractional index, authoritative ordering.
-- Legacy `sort_order int` kept one release for safety.
-- `ai_data jsonb` — `EnrichedItem | CrossCityMarker | SameDayMarker | null`.
+- **NEW** `sort_key text` — fractional index used by DnD reordering. Authoritative for visual order.
+- `sort_order int` is **not** deprecated — it survives because `transport_pairs.py`, `crossCityPayload.ts`, and `DayView` cross-city slot positioning use it for transport-pair sequencing and slot anchoring. Coexists with `sort_key`. (See ADR 2026-05-05 §Rejected.)
+- **NEW** `place_id uuid null references places(id) on delete set null` — forward-declared FK added after the `places` table (which is defined later in `schema.sql`). Backend read paths JOIN `places` and hydrate stable fields (lat/lng/image_url/description/location/timezone/categories) into `ai_data` at read time so future `places` backfills automatically heal existing items. See ADR 2026-05-05.
+- `ai_data jsonb` — `EnrichedItem | CrossCityMarker | SameDayTransportData | null`. Same-day transport items carry `{ same_day_pair, mode, distance_meters, duration_seconds, transit_summary?, geometry? }` (mode ∈ walk/bike/drive/transit; OSRM for walk/bike/drive, Transitous for transit).
 - `destination_id uuid null` — some items (notably transport) may be destination-agnostic.
 
 ### `plan_hotels` (new)
@@ -88,7 +89,7 @@ See `supabase/schema.sql` for authoritative DDL. This file documents shape + int
 
 ## Indexes (hot paths)
 
-- `plan_items(plan_id)`, `plan_items(day_id)`, `plan_items(destination_id)`.
+- `plan_items(plan_id)`, `plan_items(day_id)`, `plan_items(destination_id)`, `plan_items(place_id)` (`idx_plan_items_place`).
 - `plan_days(plan_id)`.
 - `plan_members(user_id)`.
 - `friendships(requester_id)`, `friendships(addressee_id)`.

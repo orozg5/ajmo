@@ -25,7 +25,6 @@
 - [ ] `typecheck`: `tsc --noEmit` + `mypy backend/`.
 - [ ] `test-frontend`: Playwright headless against preview.
 - [ ] `test-backend`: pytest.
-- [ ] `openapi-drift`: runs `npm run gen:api`, fails if `git diff frontend/src/lib/api/generated/` is non-empty.
 
 ### Observability
 

@@ -28,15 +28,5 @@ export default async function ProfilePage() {
     };
   }
 
-  return (
-    <div className="mx-auto w-full max-w-2xl space-y-6 p-6 md:p-10">
-      <div className="space-y-1.5">
-        <h1 className="text-display-xl">Your profile</h1>
-        <p className="text-sm text-ink-subtle">
-          How you show up on shared trips and collaborator lists.
-        </p>
-      </div>
-      <ProfileForm initialProfile={profile} />
-    </div>
-  );
+  return <ProfileForm initialProfile={profile} />;
 }

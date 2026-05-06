@@ -24,6 +24,7 @@ class PlanItemCreate(BaseModel):
     duration_minutes: int | None = None
     sort_key: str | None = None
     sort_order: int | None = None
+    place_id: str | None = None
     ai_data: dict | None = None
     destination_id: str | None = None
 
@@ -91,6 +92,7 @@ class PlanItemResponse(BaseModel):
     duration_minutes: int | None = None
     sort_key: str | None = None
     sort_order: int | None = None
+    place_id: str | None = None
     ai_data: dict | None = None
     destination_id: str | None = None
 

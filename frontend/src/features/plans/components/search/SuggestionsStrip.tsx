@@ -4,7 +4,10 @@ import { RefreshCw, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { type AddItemPayload, type AiSuggestion, type DestinationResponse, type PlanDay } from "@/lib/api";
-import { useAiSuggestions } from "@/features/plans/hooks/useAiSuggestions";
+import {
+  isPlaceholder,
+  useAiSuggestions,
+} from "@/features/plans/hooks/useAiSuggestions";
 import SuggestionCard from "@/features/plans/components/search/SuggestionCard";
 import SkeletonCard from "@/features/plans/components/dashboard/SkeletonCard";
 
@@ -17,17 +20,23 @@ interface Props {
 }
 
 export default function SuggestionsStrip({ planId, days, destinations, onAddItem, initialSuggestions }: Props) {
-  const { suggestions, isLoading, error, refresh, addingNames, addSuggestion } = useAiSuggestions({
-    planId,
-    onAddItem,
-    destinations,
-    initialSuggestions,
-  });
+  const { suggestions, isLoading, error, refresh, addingNames, addSuggestion, triggerEnrichment } =
+    useAiSuggestions({
+      planId,
+      onAddItem,
+      destinations,
+      days,
+      initialSuggestions,
+    });
 
   if (!isLoading && suggestions.length === 0 && !error) return null;
 
   return (
-    <div className="space-y-2">
+    <div
+      className="space-y-2"
+      onPointerEnter={triggerEnrichment}
+      onFocusCapture={triggerEnrichment}
+    >
       <div className="flex items-center gap-2">
         <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">AI Suggestions</span>
@@ -45,18 +54,23 @@ export default function SuggestionsStrip({ planId, days, destinations, onAddItem
       {error ? (
         <p className="text-xs text-muted-foreground py-1">{error}</p>
       ) : (
-        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {isLoading
-            ? Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
-            : suggestions.map((suggestion) => (
-                <SuggestionCard
-                  key={suggestion.slug}
-                  suggestion={suggestion}
-                  days={days}
-                  isAdding={addingNames.has(suggestion.name)}
-                  onAdd={(dayId) => addSuggestion(suggestion, dayId)}
-                />
-              ))}
+            ? Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)
+            : suggestions.map((slot) =>
+                isPlaceholder(slot) ? (
+                  <SkeletonCard key={slot.slug} />
+                ) : (
+                  <SuggestionCard
+                    key={slot.slug}
+                    suggestion={slot}
+                    days={days}
+                    destinations={destinations}
+                    isAdding={addingNames.has(slot.name)}
+                    onAdd={(dayId) => addSuggestion(slot, dayId)}
+                  />
+                ),
+              )}
         </div>
       )}
     </div>

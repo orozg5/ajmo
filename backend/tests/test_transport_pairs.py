@@ -1,13 +1,13 @@
-"""Smoke tests for the transport pair builder.
+"""Smoke tests for the cross-city transport pair builder + cache merge.
 
-These tests verify the four phase-1 scenarios from docs/phases/phase-1.md:
-1. Rome → Naples on the same day emits a pair with scope=same_day_cross_city.
-2. Destination A (days 3-5) + B (days 1-2) yields pair B→A — sort by MIN(day_number), not sort_order alone.
-3. Sentinel pair (empty city) produces a stable city-name-keyed cache entry; no LLM re-invocation on second fetch.
-4. Mid-chain item removal evicts old pairs and regenerates the new adjacent pair.
+Same-day same-city routing is handled deterministically by the frontend via
+OSRM and the /transit/directions endpoint. Cross-city goes through a backend
+multi-source orchestrator (OSRM driving + Transitous train/bus/ferry +
+haversine flight estimator) — no LLM at any point.
 
-The LLM is mocked — we're exercising the pair builder, ordering, and cache merge logic,
-not real model output. Supabase is replaced by an in-memory dict for transport_suggestions.
+The orchestrator is mocked in these tests; we're exercising the pair builder,
+ordering, and cache merge logic. Supabase is replaced by an in-memory dict
+for transport_suggestions.
 """
 from unittest.mock import AsyncMock
 
@@ -23,16 +23,13 @@ from tests.conftest import make_day, make_destination, make_item
 @pytest.fixture
 def cache_store():
     """Mutable in-memory replacement for plans.transport_suggestions."""
-    return {"same_day": {}, "cross_city": []}
+    return {"cross_city": []}
 
 
 @pytest.fixture(autouse=True)
 def patch_cache(monkeypatch, cache_store):
     async def fake_read(plan_id: str):
-        return {
-            "same_day": {k: list(v) for k, v in (cache_store.get("same_day") or {}).items()},
-            "cross_city": list(cache_store.get("cross_city") or []),
-        }
+        return {"cross_city": list(cache_store.get("cross_city") or [])}
 
     async def fake_write(plan_id: str, cache: dict):
         cache_store.clear()
@@ -43,23 +40,48 @@ def patch_cache(monkeypatch, cache_store):
 
 
 @pytest.fixture
-def llm_mock(monkeypatch):
-    """Deterministic LLM stub — returns 2 generic options per pair."""
-    async def fake_call(pairs):
+def orchestrator_mock(monkeypatch):
+    """Deterministic API-orchestrator stub — emits one assembled suggestion per pair.
+
+    Mirrors the real `generate_options_for_pairs` shape: each pair gets a
+    suggestion dict with `options` carrying `mode`+`duration_seconds`+
+    `distance_meters`, so the cache-version guard treats them as fresh entries.
+    """
+    async def fake_generate(pairs):
         return [
             {
-                "pair_index": i,
-                "scope": p.get("scope", "same_day"),
+                "source_item_id": p["source_item"].get("id"),
+                "source_item_title": p["source_item"].get("title"),
+                "source_item_location": p.get("source_resolved_location"),
+                "source_destination_id": p["source_item"].get("destination_id"),
+                "destination_item_id": p["destination_item"].get("id"),
+                "destination_item_title": p["destination_item"].get("title"),
+                "destination_item_location": p.get("destination_resolved_location"),
+                "destination_destination_id": p["destination_item"].get("destination_id"),
+                "scope": p.get("scope", "cross_city"),
+                "source_day_number": p.get("source_day_number"),
+                "destination_day_number": p.get("destination_day_number"),
+                "source_city": p.get("source_city"),
+                "destination_city": p.get("destination_city"),
+                "source_country": p.get("source_country"),
+                "destination_country": p.get("destination_country"),
                 "options": [
-                    {"name": "Walk", "one_line": "10 min · Free", "price_hint": "Free"},
-                    {"name": "Taxi", "one_line": "5 min · ~$10", "price_hint": "~$10"},
+                    {
+                        "mode": "flight",
+                        "name": "Flight",
+                        "duration_seconds": 5400,
+                        "distance_meters": 600_000,
+                        "is_estimate": True,
+                        "transit_summary": None,
+                        "geometry": None,
+                    },
                 ],
             }
-            for i, p in enumerate(pairs)
+            for p in pairs
         ]
 
-    mock = AsyncMock(side_effect=fake_call)
-    monkeypatch.setattr(transport, "call_llm_for_transport", mock)
+    mock = AsyncMock(side_effect=fake_generate)
+    monkeypatch.setattr(transport, "generate_options_for_pairs", mock)
     return mock
 
 
@@ -67,37 +89,7 @@ def llm_mock(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_same_day_cross_city_pair(monkeypatch, llm_mock):
-    """Two items on the same day in different cities → scope=same_day_cross_city."""
-    rome = make_destination("R", "Rome", "Italy", days=[1])
-    naples = make_destination("N", "Naples", "Italy", days=[1])
-    colosseum = make_item("i1", "Colosseum", "R", sort_order=0)
-    pompeii = make_item("i2", "Pompeii", "N", sort_order=1)
-    day1 = make_day("D1", 1, [colosseum, pompeii])
-
-    async def fake_days(plan_id):
-        return [day1]
-
-    async def fake_destinations(plan_id):
-        return [rome, naples]
-
-    monkeypatch.setattr(transport, "list_days_with_items", fake_days)
-    monkeypatch.setattr(transport, "get_destinations_for_plan", fake_destinations)
-
-    result = await transport.get_same_day_suggestions("P1", "D1")
-
-    assert llm_mock.call_count == 1
-    assert len(result) == 1
-    assert result[0]["scope"] == "same_day_cross_city"
-    assert result[0]["source_item_id"] == "i1"
-    assert result[0]["destination_item_id"] == "i2"
-    assert result[0]["source_city"] == "Rome"
-    assert result[0]["destination_city"] == "Naples"
-    assert len(result[0]["options"]) == 2
-
-
-@pytest.mark.asyncio
-async def test_cross_city_ordering_by_min_day_number(monkeypatch, llm_mock):
+async def test_cross_city_ordering_by_min_day_number(monkeypatch, orchestrator_mock):
     """A on days 3-5 (sort_order=0), B on days 1-2 (sort_order=1): pair is B→A."""
     dest_a = make_destination("A", "Alpha", "Country", days=[3, 4, 5], sort_order=0)
     dest_b = make_destination("B", "Bravo", "Country", days=[1, 2], sort_order=1)
@@ -128,7 +120,7 @@ async def test_cross_city_ordering_by_min_day_number(monkeypatch, llm_mock):
 
 
 @pytest.mark.asyncio
-async def test_sentinel_pair_cache_stable(monkeypatch, llm_mock):
+async def test_sentinel_pair_cache_stable(monkeypatch, orchestrator_mock):
     """Sentinel destination_item (id=None) uses a city-name key; second fetch hits cache."""
     dest_a = make_destination("A", "Alpha", "Country", days=[1], sort_order=0)
     dest_b = make_destination("B", "Bravo", "Country", days=[2], sort_order=1)
@@ -146,7 +138,7 @@ async def test_sentinel_pair_cache_stable(monkeypatch, llm_mock):
     monkeypatch.setattr(transport, "get_destinations_for_plan", fake_destinations)
 
     first = await transport.get_cross_city_suggestions("P1")
-    assert llm_mock.call_count == 1
+    assert orchestrator_mock.call_count == 1
     assert len(first) == 1
     assert first[0]["source_item_id"] == "x"
     assert first[0]["destination_item_id"] is None  # B is a sentinel
@@ -154,50 +146,47 @@ async def test_sentinel_pair_cache_stable(monkeypatch, llm_mock):
     assert first[0]["destination_city"] == "Bravo"
 
     second = await transport.get_cross_city_suggestions("P1")
-    # Cache hit — LLM is not re-invoked.
-    assert llm_mock.call_count == 1
+    # Cache hit — orchestrator is not re-invoked.
+    assert orchestrator_mock.call_count == 1
     assert len(second) == 1
     assert second[0]["source_city"] == "Alpha"
     assert second[0]["destination_city"] == "Bravo"
 
 
 @pytest.mark.asyncio
-async def test_mid_chain_item_removal_regenerates(monkeypatch, llm_mock):
-    """Day with X→Y→Z caches two pairs; removing Y evicts both and regenerates X→Z."""
-    dest = make_destination("D", "Gamma", "Country", days=[1])
-    x = make_item("x", "X", "D", sort_order=0)
-    y = make_item("y", "Y", "D", sort_order=1)
-    z = make_item("z", "Z", "D", sort_order=2)
+async def test_legacy_cache_is_dropped(monkeypatch, orchestrator_mock, cache_store):
+    """Pre-change cached entries (no `mode` on options) trigger a full regeneration."""
+    cache_store["cross_city"] = [
+        {
+            "source_item_id": "x",
+            "destination_item_id": "y",
+            "source_city": "Alpha",
+            "destination_city": "Bravo",
+            "options": [
+                {"name": "Intercity train", "one_line": "4h · ~$45", "price_hint": "~$45"},
+            ],
+        }
+    ]
+
+    dest_a = make_destination("A", "Alpha", "Country", days=[1], sort_order=0)
+    dest_b = make_destination("B", "Bravo", "Country", days=[2], sort_order=1)
+    item_x = make_item("x", "X-item", "A", sort_order=0)
+    item_y = make_item("y", "Y-item", "B", sort_order=0)
+    day1 = make_day("D1", 1, [item_x])
+    day2 = make_day("D2", 2, [item_y])
+
+    async def fake_days(plan_id):
+        return [day1, day2]
 
     async def fake_destinations(plan_id):
-        return [dest]
+        return [dest_a, dest_b]
 
+    monkeypatch.setattr(transport, "list_days_with_items", fake_days)
     monkeypatch.setattr(transport, "get_destinations_for_plan", fake_destinations)
 
-    # First call: all three items present.
-    day_xyz = make_day("D1", 1, [x, y, z])
+    result = await transport.get_cross_city_suggestions("P1")
 
-    async def fake_days_full(plan_id):
-        return [day_xyz]
-
-    monkeypatch.setattr(transport, "list_days_with_items", fake_days_full)
-
-    first = await transport.get_same_day_suggestions("P1", "D1")
-    assert len(first) == 2
-    pair_ids = {(s["source_item_id"], s["destination_item_id"]) for s in first}
-    assert pair_ids == {("x", "y"), ("y", "z")}
-    assert llm_mock.call_count == 1
-
-    # Second call: Y removed → remaining items are X, Z.
-    day_xz = make_day("D1", 1, [x, z])
-
-    async def fake_days_minus_y(plan_id):
-        return [day_xz]
-
-    monkeypatch.setattr(transport, "list_days_with_items", fake_days_minus_y)
-
-    second = await transport.get_same_day_suggestions("P1", "D1")
-    assert len(second) == 1
-    assert second[0]["source_item_id"] == "x"
-    assert second[0]["destination_item_id"] == "z"
-    assert llm_mock.call_count == 2  # new pair → new LLM invocation
+    # Legacy cache was wiped on read; orchestrator regenerated the pair fresh.
+    assert orchestrator_mock.call_count == 1
+    assert len(result) == 1
+    assert result[0]["options"][0]["mode"] == "flight"

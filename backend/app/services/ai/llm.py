@@ -43,14 +43,20 @@ def build_llm(provider: str, temperature: float, max_tokens: int):
             num_ctx=settings.OLLAMA_NUM_CTX,
             keep_alive=settings.OLLAMA_KEEP_ALIVE,
             reasoning=settings.OLLAMA_REASONING,
+            repeat_penalty=settings.OLLAMA_REPEAT_PENALTY,
         )
     if provider == "gemini":
+        # Gemini 2.5 series spends "thinking" tokens against max_output_tokens
+        # before the final answer is emitted, which truncated structured-output
+        # JSON mid-field at our cap. We don't need reasoning for fact-extraction
+        # from search results, so disable it — also makes responses faster.
         return ChatGoogleGenerativeAI(
             model=settings.AI_MODEL,
             google_api_key=settings.GOOGLE_API_KEY,
             temperature=temperature,
             max_output_tokens=max_tokens,
             max_retries=0,
+            thinking_budget=0,
         )
     if provider == "groq":
         if not settings.GROQ_API_KEY or not settings.FALLBACK_AI_MODEL:
@@ -89,6 +95,8 @@ async def call_structured(
     prompt: str,
     temperature: float,
     max_tokens: int,
+    *,
+    provider_override: str | None = None,
 ) -> ModelT:
     """Invoke an LLM with structured output for a given feature.
 
@@ -96,8 +104,13 @@ async def call_structured(
     instance. Falls back to the next provider only on quota errors. Validation
     errors (Pydantic ValidationError) and other structural problems propagate
     immediately — masking them would hide schema mismatches.
+
+    `provider_override` bypasses the feature chain and pins one provider — used
+    by callers that need an explicit cloud-LLM retry when the chained provider
+    succeeds technically but produces unusable output (e.g. a small local model
+    regurgitating excluded names in suggestions).
     """
-    chain = chain_for_feature(feature)
+    chain = [provider_override] if provider_override else chain_for_feature(feature)
     tried: list[str] = []
 
     for provider in chain:

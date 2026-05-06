@@ -1,113 +1,185 @@
 "use client";
 
-import { CSS } from "@dnd-kit/utilities";
-import { useSortable } from "@dnd-kit/sortable";
-import { AlertTriangle, GripVertical, TrainFront, Trash2 } from "lucide-react";
+import { Bike, Bus, Car, Footprints, Plane, Sailboat, Train, TrainFront, TramFront, X } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { type PlanItem } from "@/lib/api";
+import {
+  type CrossCityTransportData,
+  type CrossCityTransportMode,
+  type PlanItem,
+  type SameDayTransportData,
+  type SameDayTransportMode,
+} from "@/lib/api";
+import {
+  formatDistance,
+  formatDuration,
+} from "@/features/plans/utils/transportFormat";
 
 interface Props {
   item: PlanItem;
   onRemove: () => void;
   isHighlighted?: boolean;
-  isOrphan?: boolean;
   onHoverChange?: (itemId: string, hovered: boolean) => void;
 }
 
-export default function TransportCard({ item, onRemove, isHighlighted = false, isOrphan = false, onHoverChange }: Props) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: item.id,
-  });
+const SAME_DAY_ICON: Record<SameDayTransportMode, typeof Footprints> = {
+  walk: Footprints,
+  bike: Bike,
+  drive: Car,
+  transit: TramFront,
+};
 
-  const ai = (item.ai_data ?? null) as { one_line?: string; price_hint?: string } | null;
-  const oneLine = ai?.one_line ?? null;
-  const priceHint = ai?.price_hint ?? null;
-  const subtitle = item.notes?.trim() || oneLine;
+const SAME_DAY_LABEL: Record<SameDayTransportMode, string> = {
+  walk: "Walk",
+  bike: "Bike",
+  drive: "Drive",
+  transit: "Transit",
+};
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.6 : 1,
-  } as const;
+// Hex values intentionally match the map's route-line colors in
+// `lib/map/init.ts` so the icon swatch on a transport item is the same color
+// as the line drawn on the map for that mode. Tailwind v4 reads these
+// arbitrary class strings via JIT — keep them as literal strings, not
+// concatenated, or JIT won't pick them up.
+const SAME_DAY_STYLE: Record<SameDayTransportMode, { iconBg: string; iconText: string; border: string }> = {
+  walk:    { iconBg: "bg-[#1e6fbf]/15", iconText: "text-[#1e6fbf]", border: "border-[#1e6fbf]/50" },
+  bike:    { iconBg: "bg-[#2d8f4d]/15", iconText: "text-[#2d8f4d]", border: "border-[#2d8f4d]/50" },
+  drive:   { iconBg: "bg-[#d97f3a]/15", iconText: "text-[#d97f3a]", border: "border-[#d97f3a]/50" },
+  transit: { iconBg: "bg-[#7b3fa3]/15", iconText: "text-[#7b3fa3]", border: "border-[#7b3fa3]/50" },
+};
+
+const CROSS_CITY_ICON: Record<CrossCityTransportMode, typeof TrainFront> = {
+  drive: Car,
+  train: Train,
+  bus: Bus,
+  ferry: Sailboat,
+  flight: Plane,
+};
+
+// Cross-city items use the map's intercity (brown) color for the icon and
+// border, plus a tinted background panel to stand apart from same-day items.
+const CROSS_CITY_ICON_BG = "bg-[#8a4a2a]/15";
+const CROSS_CITY_ICON_TEXT = "text-[#8a4a2a]";
+const CROSS_CITY_BORDER = "border-[#8a4a2a]/60";
+const CROSS_CITY_PANEL_BG = "bg-[#8a4a2a]/5";
+
+function isSameDayTransport(data: PlanItem["ai_data"]): data is SameDayTransportData {
+  return Boolean(
+    data
+      && typeof data === "object"
+      && "same_day_pair" in data
+      && "mode" in data
+      && "distance_meters" in data,
+  );
+}
+
+function isCrossCityTransport(data: PlanItem["ai_data"]): data is CrossCityTransportData {
+  return Boolean(
+    data
+      && typeof data === "object"
+      && "cross_city_pair" in data
+      && "mode" in data,
+  );
+}
+
+export default function TransportCard({ item, onRemove, isHighlighted = false, onHoverChange }: Props) {
+  const sameDayData = isSameDayTransport(item.ai_data) ? item.ai_data : null;
+  const crossCityData = !sameDayData && isCrossCityTransport(item.ai_data) ? item.ai_data : null;
+
+  let ModeIcon: typeof TrainFront = TrainFront;
+  let modeLabel = item.title;
+  const detailParts: string[] = [];
+
+  if (sameDayData) {
+    ModeIcon = SAME_DAY_ICON[sameDayData.mode];
+    modeLabel = SAME_DAY_LABEL[sameDayData.mode];
+    detailParts.push(formatDuration(sameDayData.duration_seconds));
+    detailParts.push(formatDistance(sameDayData.distance_meters));
+    if (sameDayData.transit_summary) detailParts.push(sameDayData.transit_summary);
+  } else if (crossCityData) {
+    ModeIcon = CROSS_CITY_ICON[crossCityData.mode] ?? TrainFront;
+    modeLabel = item.title;
+    if (crossCityData.duration_seconds != null) {
+      detailParts.push(formatDuration(crossCityData.duration_seconds));
+    }
+    if (crossCityData.distance_meters != null) {
+      detailParts.push(formatDistance(crossCityData.distance_meters));
+    }
+    if (crossCityData.transit_summary) detailParts.push(crossCityData.transit_summary);
+  } else if (item.notes?.trim()) {
+    detailParts.push(item.notes.trim());
+  }
+
+  const sameDayStyle = sameDayData ? SAME_DAY_STYLE[sameDayData.mode] : null;
+  const isCrossCity = !!crossCityData;
 
   return (
-    <article
-      ref={setNodeRef}
-      style={style}
+    <div
       data-item-id={item.id}
       onMouseEnter={() => onHoverChange?.(item.id, true)}
       onMouseLeave={() => onHoverChange?.(item.id, false)}
       onFocus={() => onHoverChange?.(item.id, true)}
       onBlur={() => onHoverChange?.(item.id, false)}
       className={cn(
-        "relative overflow-hidden rounded-2xl border border-border bg-card p-3 pl-4",
-        "shadow-[0_1px_0_rgba(10,10,12,0.04),0_4px_12px_-8px_rgba(10,10,12,0.06)]",
-        isDragging && "ring-2 ring-primary/60",
-        isHighlighted && "ring-2 ring-secondary/70",
+        "group flex items-center gap-3 rounded-lg",
+        "ml-[1.125rem]",
+        isCrossCity
+          // Cross-city: roomier, tinted panel, dashed brown left border —
+          // visually distinct from same-day so the eye treats it as a
+          // city-to-city transition, not just another route within a city.
+          // mt-3/mb-3 give breathing room from neighboring city sections.
+          ? cn("mt-3 mb-3 py-2.5 pl-4 pr-2 border-l-2 border-dashed", CROSS_CITY_BORDER, CROSS_CITY_PANEL_BG)
+          : cn("my-0.5 py-1.5 pl-4 pr-2 border-l-2", sameDayStyle ? sameDayStyle.border : "border-sky-500/40"),
+        isHighlighted && "ring-1 ring-secondary/40 bg-secondary/10",
       )}
     >
-      <span aria-hidden className="absolute inset-y-0 left-0 w-1 bg-sky-500/70" />
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          aria-label={`Drag ${item.title}`}
-          className="flex size-7 shrink-0 cursor-grab items-center justify-center rounded-md text-ink-subtle hover:bg-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary active:cursor-grabbing"
-          {...attributes}
-          {...listeners}
-        >
-          <GripVertical className="size-4" strokeWidth={1.5} />
-        </button>
-
-        <Badge
-          variant="outline"
-          className="shrink-0 gap-1 border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300"
-        >
-          <TrainFront className="size-3.5" strokeWidth={1.5} />
-          Transport
-        </Badge>
-
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-sm font-semibold text-ink">{item.title}</span>
-            {isOrphan ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span
-                    role="img"
-                    aria-label="Transport may be stale"
-                    className="inline-flex size-5 shrink-0 items-center justify-center text-amber-600 dark:text-amber-400"
-                  >
-                    <AlertTriangle className="size-4" strokeWidth={1.5} />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  This transport no longer connects adjacent items — consider removing.
-                </TooltipContent>
-              </Tooltip>
-            ) : null}
-          </div>
-          {subtitle ? (
-            <span className="truncate text-xs text-ink-subtle">{subtitle}</span>
-          ) : null}
-          {priceHint && !subtitle?.includes(priceHint) ? (
-            <span className="truncate text-xs text-ink-subtle">{priceHint}</span>
-          ) : null}
-        </div>
-
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onRemove}
-          className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-          aria-label={`Remove ${item.title}`}
-        >
-          <Trash2 className="size-4" strokeWidth={1.5} />
-        </Button>
+      <div
+        className={cn(
+          "flex shrink-0 items-center justify-center rounded-full",
+          isCrossCity
+            ? cn("size-8", CROSS_CITY_ICON_BG, CROSS_CITY_ICON_TEXT)
+            : cn(
+                "size-7",
+                sameDayStyle ? sameDayStyle.iconBg : "bg-sky-500/15",
+                sameDayStyle ? sameDayStyle.iconText : "text-sky-700 dark:text-sky-300",
+              ),
+        )}
+      >
+        <ModeIcon className={isCrossCity ? "size-4" : "size-3.5"} strokeWidth={1.75} />
       </div>
-    </article>
+
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5",
+          isCrossCity ? "text-sm" : "text-xs",
+        )}
+      >
+        <span className="font-semibold text-ink">{modeLabel}</span>
+        {isCrossCity && (
+          <span className="inline-flex items-center rounded-full bg-[#8a4a2a]/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#8a4a2a]">
+            Cross-city
+          </span>
+        )}
+        {detailParts.length > 0 ? (
+          <span className="text-ink-subtle">
+            {detailParts.map((part, idx) => (
+              <span key={idx}>
+                {idx > 0 ? <span className="opacity-50"> · </span> : null}
+                {part}
+              </span>
+            ))}
+          </span>
+        ) : null}
+      </div>
+
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${modeLabel} transport`}
+        className="shrink-0 rounded-full p-1 text-ink-subtle hover:bg-destructive/10 hover:text-destructive"
+      >
+        <X className="size-3.5" strokeWidth={1.75} />
+      </button>
+    </div>
   );
 }

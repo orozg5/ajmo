@@ -1,18 +1,38 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
-import { Loader2, Train } from "lucide-react";
+import { Bus, Car, Loader2, Plane, Sailboat, Train, TrainFront } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { type DestinationResponse, type PlanDay, type TransportSuggestion } from "@/lib/api";
 import {
-  computeCrossCityExtraPayload,
+  type CrossCityTransportMode,
+  type DestinationResponse,
+  type PlanDay,
+  type TransportOption,
+  type TransportSuggestion,
+} from "@/lib/api";
+import {
+  formatTransitionLabel,
+  getSlotOptions,
   type CrossCityExtraPayload,
+  type CrossCitySlotOption,
 } from "@/features/plans/utils/crossCityPayload";
+import {
+  formatDistance,
+  formatDuration,
+} from "@/features/plans/utils/transportFormat";
 
 type ExtraPayload = CrossCityExtraPayload;
+
+const MODE_ICON: Record<CrossCityTransportMode, typeof TrainFront> = {
+  drive: Car,
+  train: Train,
+  bus: Bus,
+  ferry: Sailboat,
+  flight: Plane,
+};
 
 interface CrossCityTransportPanelProps {
   open: boolean;
@@ -23,7 +43,12 @@ interface CrossCityTransportPanelProps {
   days: PlanDay[];
   destinations: DestinationResponse[];
   addingKeys: Set<string>;
-  onAddOption: (suggestion: TransportSuggestion, optionIndex: number, dayId: string, extra?: ExtraPayload) => void;
+  onAddOption: (
+    suggestion: TransportSuggestion,
+    optionIndex: number,
+    dayId: string,
+    extra?: ExtraPayload,
+  ) => void;
 }
 
 export default function CrossCityTransportPanel({
@@ -42,7 +67,7 @@ export default function CrossCityTransportPanel({
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Train className="h-4 w-4" />
+            <TrainFront className="h-4 w-4" />
             Cross-city Transport
           </DialogTitle>
         </DialogHeader>
@@ -91,22 +116,27 @@ interface SuggestionCardProps {
   days: PlanDay[];
   destinations: DestinationResponse[];
   isAdding: boolean;
-  onAddOption: (suggestion: TransportSuggestion, optionIndex: number, dayId: string, extra?: ExtraPayload) => void;
+  onAddOption: (
+    suggestion: TransportSuggestion,
+    optionIndex: number,
+    dayId: string,
+    extra?: ExtraPayload,
+  ) => void;
 }
 
 function SuggestionCard({ suggestion, days, destinations, isAdding, onAddOption }: SuggestionCardProps) {
   const sourceCity = suggestion.source_city ?? suggestion.source_item_title ?? "?";
   const destinationCity = suggestion.destination_city ?? suggestion.destination_item_title ?? "?";
-  const sourceDayNumber = suggestion.source_day_number;
-  const destinationDayNumber = suggestion.destination_day_number;
 
-  const dayRangeLabel = (() => {
-    if (sourceDayNumber == null) return null;
-    if (destinationDayNumber == null || destinationDayNumber === sourceDayNumber) {
-      return `Day ${sourceDayNumber}`;
-    }
-    return `Day ${sourceDayNumber} → Day ${destinationDayNumber}`;
-  })();
+  // Subtitle shows ONLY the day on which the actual transition happens, not
+  // either city's full coverage span. For Paris (Days 1-3) → Le Mans (Day 3)
+  // the transition window is Day 3, so the subtitle reads "Day 3".
+  const transitionLabel = formatTransitionLabel(suggestion, destinations);
+
+  const slotOptions = useMemo(
+    () => getSlotOptions(suggestion, days, destinations),
+    [suggestion, days, destinations],
+  );
 
   return (
     <div className="rounded-lg border p-4 space-y-3">
@@ -116,119 +146,110 @@ function SuggestionCard({ suggestion, days, destinations, isAdding, onAddOption 
           <span className="text-muted-foreground mx-2">→</span>
           {destinationCity}
         </p>
-        {dayRangeLabel && (
-          <p className="text-xs text-muted-foreground mt-0.5">{dayRangeLabel}</p>
-        )}
-        {(suggestion.source_item_title || suggestion.destination_item_title) && (
-          <p className="text-xs text-muted-foreground">
-            {suggestion.source_item_title ?? suggestion.source_city} →{" "}
-            {suggestion.destination_item_title ?? suggestion.destination_city}
-          </p>
+        {transitionLabel && (
+          <p className="text-xs text-muted-foreground mt-0.5">{transitionLabel}</p>
         )}
       </div>
 
       <div className="space-y-2">
-        {suggestion.options.map((option, optIdx) => (
-          <OptionRow
-            key={optIdx}
-            option={option}
-            optIdx={optIdx}
-            suggestion={suggestion}
-            days={days}
-            destinations={destinations}
-            disabled={isAdding}
-            onAddOption={onAddOption}
-          />
-        ))}
+        {suggestion.options.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No routes found between these cities.</p>
+        ) : (
+          suggestion.options.map((option, optIdx) => (
+            <OptionRow
+              key={`${option.mode}-${optIdx}`}
+              option={option}
+              optIdx={optIdx}
+              suggestion={suggestion}
+              slotOptions={slotOptions}
+              disabled={isAdding}
+              onAddOption={onAddOption}
+            />
+          ))
+        )}
       </div>
     </div>
   );
 }
 
 interface OptionRowProps {
-  option: TransportSuggestion["options"][number];
+  option: TransportOption;
   optIdx: number;
   suggestion: TransportSuggestion;
-  days: PlanDay[];
-  destinations: DestinationResponse[];
+  slotOptions: CrossCitySlotOption[];
   disabled: boolean;
-  onAddOption: (suggestion: TransportSuggestion, optionIndex: number, dayId: string, extra?: ExtraPayload) => void;
+  onAddOption: (
+    suggestion: TransportSuggestion,
+    optionIndex: number,
+    dayId: string,
+    extra?: ExtraPayload,
+  ) => void;
 }
 
-function OptionRow({ option, optIdx, suggestion, days, destinations, disabled, onAddOption }: OptionRowProps) {
-  const defaultDay = days.find((d) => d.day_number === suggestion.source_day_number) ?? days[0];
+function OptionRow({
+  option,
+  optIdx,
+  suggestion,
+  slotOptions,
+  disabled,
+  onAddOption,
+}: OptionRowProps) {
+  const Icon = MODE_ICON[option.mode] ?? TrainFront;
+  const detailParts: string[] = [];
+  if (option.duration_seconds != null) detailParts.push(formatDuration(option.duration_seconds));
+  if (option.distance_meters != null) detailParts.push(formatDistance(option.distance_meters));
+  if (option.transit_summary) detailParts.push(option.transit_summary);
 
   return (
     <div className="flex items-center gap-2">
+      <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary/15 text-secondary">
+        <Icon className="size-3.5" strokeWidth={1.75} />
+      </div>
       <div className="flex-1 text-sm">
         <span className="font-medium">{option.name}</span>
-        {option.one_line && <span className="text-muted-foreground ml-2">{option.one_line}</span>}
-        {option.price_hint && <span className="text-xs text-muted-foreground ml-2">{option.price_hint}</span>}
+        {detailParts.length > 0 && (
+          <span className="ml-2 text-muted-foreground">{detailParts.join(" · ")}</span>
+        )}
       </div>
-      {days.length > 1 ? (
-        <DayPickerDropdown
-          suggestion={suggestion}
-          optIdx={optIdx}
-          days={days}
-          destinations={destinations}
-          defaultDay={defaultDay}
-          disabled={disabled}
-          onAddOption={onAddOption}
-        />
-      ) : (
+      {slotOptions.length === 1 ? (
         <Button
           size="sm"
           variant="outline"
           className="h-7 text-xs"
-          disabled={disabled || !defaultDay}
-          onClick={() => {
-            if (defaultDay) {
-              onAddOption(suggestion, optIdx, defaultDay.id, computeCrossCityExtraPayload(defaultDay, suggestion));
-            }
-          }}
+          disabled={disabled}
+          onClick={() =>
+            onAddOption(suggestion, optIdx, slotOptions[0].dayId, slotOptions[0].payload)
+          }
+          title={slotOptions[0].label}
         >
           {disabled ? <Loader2 className="h-3 w-3 animate-spin" /> : "+ Add"}
         </Button>
+      ) : (
+        <SlotPickerDropdown
+          slotOptions={slotOptions}
+          disabled={disabled}
+          onPick={(slot) => onAddOption(suggestion, optIdx, slot.dayId, slot.payload)}
+        />
       )}
     </div>
   );
 }
 
-interface DayPickerDropdownProps {
-  suggestion: TransportSuggestion;
-  optIdx: number;
-  days: PlanDay[];
-  destinations: DestinationResponse[];
-  defaultDay: PlanDay | undefined;
+interface SlotPickerDropdownProps {
+  slotOptions: CrossCitySlotOption[];
   disabled: boolean;
-  onAddOption: (suggestion: TransportSuggestion, optionIndex: number, dayId: string, extra?: ExtraPayload) => void;
+  onPick: (slot: CrossCitySlotOption) => void;
 }
 
-function DayPickerDropdown({
-  suggestion,
-  optIdx,
-  days,
-  destinations,
-  defaultDay,
-  disabled,
-  onAddOption,
-}: DayPickerDropdownProps) {
+function SlotPickerDropdown({ slotOptions, disabled, onPick }: SlotPickerDropdownProps) {
   const [open, setOpen] = useState(false);
 
-  const filteredDays = days.filter((d) => {
-    if (suggestion.source_day_number == null || suggestion.destination_day_number == null) return true;
-    if (suggestion.source_day_number === suggestion.destination_day_number) {
-      return d.day_number === suggestion.source_day_number;
-    }
+  if (slotOptions.length === 0) {
     return (
-      d.day_number === suggestion.source_day_number ||
-      d.day_number === suggestion.destination_day_number
+      <Button size="sm" variant="outline" className="h-7 text-xs" disabled>
+        No slot
+      </Button>
     );
-  });
-
-  function getDayLabel(day: PlanDay): string {
-    const city = destinations.find((d) => d.days.includes(day.day_number))?.city;
-    return `Day ${day.day_number}${city ? ` – ${city}` : ""}`;
   }
 
   return (
@@ -238,22 +259,22 @@ function DayPickerDropdown({
         variant="outline"
         className="h-7 text-xs"
         disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setOpen((value) => !value)}
       >
-        {disabled ? <Loader2 className="h-3 w-3 animate-spin" /> : "Add to Day ▼"}
+        {disabled ? <Loader2 className="h-3 w-3 animate-spin" /> : "Add ▼"}
       </Button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-10 bg-popover border rounded-lg shadow-md p-2 space-y-1 min-w-[180px]">
-          {filteredDays.map((day) => (
+        <div className="absolute right-0 top-full mt-1 z-10 bg-popover border rounded-lg shadow-md p-2 space-y-1 min-w-[260px]">
+          {slotOptions.map((slot) => (
             <button
-              key={day.id}
+              key={slot.key}
               className="w-full text-left px-2 py-1 text-sm hover:bg-muted rounded"
               onClick={() => {
                 setOpen(false);
-                onAddOption(suggestion, optIdx, day.id, computeCrossCityExtraPayload(day, suggestion));
+                onPick(slot);
               }}
             >
-              {getDayLabel(day)}
+              {slot.label}
             </button>
           ))}
         </div>

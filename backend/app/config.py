@@ -1,5 +1,3 @@
-from typing import Literal
-
 from pydantic_settings import BaseSettings
 
 
@@ -14,18 +12,20 @@ class Settings(BaseSettings):
     FALLBACK_AI_MODEL: str
     AI_PROVIDER_CHAIN_ENRICH: str
     AI_PROVIDER_CHAIN_SUGGESTIONS: str
-    AI_PROVIDER_CHAIN_TRANSPORT: str
     OLLAMA_BASE_URL: str
     OLLAMA_MODEL: str
     OLLAMA_KEEP_ALIVE: str
     OLLAMA_NUM_CTX: int
     OLLAMA_REASONING: bool
-    GEOCODER_PRIMARY: Literal["photon", "nominatim"]
-    GEOCODER_FALLBACK: Literal["photon", "nominatim", ""]
+    OLLAMA_REPEAT_PENALTY: float
     GEOCODER_USER_AGENT: str
+    PEXELS_API_KEY: str
     CORS_ORIGINS: list[str]
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # `extra="ignore"` so removing a settings field doesn't break dev .env
+    # files that still carry the now-deprecated key. Required fields still
+    # error if missing.
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

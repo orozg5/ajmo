@@ -39,7 +39,7 @@ async def patch_me_route(
     current_user: str = Depends(get_current_user),
 ) -> ProfileResponse:
     try:
-        payload = body.model_dump(mode="json", exclude_none=True)
+        payload = body.model_dump(mode="json", exclude_unset=True)
         return await update_profile(current_user, payload)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

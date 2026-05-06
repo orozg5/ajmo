@@ -4,7 +4,7 @@ import { useMemo } from "react";
 
 import { type PlanDay, type PlanHotel, type PlanItem } from "@/lib/api";
 import type { EnrichedItem } from "@/lib/api/ai";
-import type { MapItem } from "@/lib/map/init";
+import type { MapItem, RouteKind } from "@/lib/map/init";
 
 import { sortItems } from "@/features/plans/utils/sortKeys";
 
@@ -12,8 +12,9 @@ export interface MapAdjacency {
   id: string;
   src: MapItem;
   dst: MapItem;
-  kind: "walk" | "transit";
+  kind: RouteKind;
   label?: string;
+  geometry?: [number, number][];
 }
 
 export interface UseMapStateOptions {
@@ -27,6 +28,19 @@ export interface UseMapStateOptions {
 export interface UseMapStateReturn {
   markers: MapItem[];
   adjacencies: MapAdjacency[];
+}
+
+interface SameDayTransportAiData {
+  same_day_pair?: string;
+  mode?: "walk" | "bike" | "drive" | "transit";
+  distance_meters?: number;
+  duration_seconds?: number;
+  transit_summary?: string;
+  geometry?: [number, number][];
+}
+
+interface CrossCityTransportAiData {
+  cross_city_pair?: string;
 }
 
 function hotelForDay(hotels: PlanHotel[], dayNumber: number): PlanHotel | null {
@@ -76,6 +90,41 @@ function toMarker(item: PlanItem, dayNumber: number): MapItem | null {
   };
 }
 
+interface ParsedTransport {
+  srcId: string;
+  dstId: string;
+  kind: RouteKind | null;
+  geometry?: [number, number][];
+}
+
+function parseTransport(item: PlanItem): ParsedTransport | null {
+  if (item.item_type !== "transport") return null;
+  const ai = item.ai_data as (SameDayTransportAiData & CrossCityTransportAiData) | null;
+  if (!ai) return null;
+
+  if (ai.cross_city_pair) {
+    const [srcId, dstId] = ai.cross_city_pair.split("->");
+    if (!srcId || !dstId) return null;
+    return { srcId, dstId, kind: "intercity" };
+  }
+
+  if (ai.same_day_pair) {
+    const [srcId, dstId] = ai.same_day_pair.split("->");
+    if (!srcId || !dstId) return null;
+    const mode = ai.mode;
+    if (mode === "walk" || mode === "bike" || mode === "drive") {
+      return { srcId, dstId, kind: mode };
+    }
+    if (mode === "transit") {
+      return { srcId, dstId, kind: "transit", geometry: ai.geometry };
+    }
+    // Legacy LLM-suggested same-day item without a deterministic mode — skip the line.
+    return { srcId, dstId, kind: null };
+  }
+
+  return null;
+}
+
 export function useMapState({
   days,
   hotels,
@@ -85,6 +134,7 @@ export function useMapState({
 }: UseMapStateOptions): UseMapStateReturn {
   return useMemo(() => {
     const markers: MapItem[] = [];
+    const markerById = new Map<string, MapItem>();
     const adjacencies: MapAdjacency[] = [];
 
     const visibleDays = filterMode === "active-day"
@@ -93,21 +143,23 @@ export function useMapState({
 
     const emittedHotelIds = new Set<string>();
 
+    const passesDestinationFilter = (item: PlanItem): boolean => {
+      if (!allowedDestinationIds) return true;
+      if (!item.destination_id) return true;
+      return allowedDestinationIds.has(item.destination_id);
+    };
+
     for (const day of visibleDays) {
-      const itemsWithCoords = sortItems(day.items)
-        .filter((item) => item.item_type !== "transport")
-        .filter((item) => {
-          if (!allowedDestinationIds) return true;
-          if (!item.destination_id) return true;
-          return allowedDestinationIds.has(item.destination_id);
-        })
-        .filter(hasCoordinates);
+      const dayItemsSorted = sortItems(day.items);
 
-      const dayMarkers = itemsWithCoords
-        .map((item) => toMarker(item, day.day_number))
-        .filter((marker): marker is MapItem => marker !== null);
-
-      markers.push(...dayMarkers);
+      for (const item of dayItemsSorted) {
+        if (item.item_type === "transport") continue;
+        if (!passesDestinationFilter(item)) continue;
+        const marker = toMarker(item, day.day_number);
+        if (!marker) continue;
+        markers.push(marker);
+        markerById.set(item.id, marker);
+      }
 
       const hotel = hotelForDay(hotels, day.day_number);
       const hotelMarker = hotel ? toHotelMarker(hotel, day.day_number) : null;
@@ -115,37 +167,25 @@ export function useMapState({
         markers.push(hotelMarker);
         emittedHotelIds.add(hotelMarker.id);
       }
+    }
 
-      for (let i = 0; i < itemsWithCoords.length - 1; i++) {
-        const src = itemsWithCoords[i];
-        const dst = itemsWithCoords[i + 1];
-        const sameDestination =
-          src.destination_id && dst.destination_id && src.destination_id === dst.destination_id;
+    // Adjacencies span any day; transport item drives the line, src/dst markers
+    // come from the marker map built above. Filter respects active-day mode by
+    // requiring both endpoints to be in the visible marker set.
+    for (const day of visibleDays) {
+      for (const item of day.items) {
+        const parsed = parseTransport(item);
+        if (!parsed || !parsed.kind) continue;
+        const src = markerById.get(parsed.srcId);
+        const dst = markerById.get(parsed.dstId);
+        if (!src || !dst) continue;
         adjacencies.push({
-          id: `${src.id}__${dst.id}`,
-          src: dayMarkers[i],
-          dst: dayMarkers[i + 1],
-          kind: sameDestination ? "walk" : "transit",
+          id: item.id,
+          src,
+          dst,
+          kind: parsed.kind,
+          geometry: parsed.geometry,
         });
-      }
-
-      if (hotelMarker && dayMarkers.length > 0) {
-        const firstMarker = dayMarkers[0];
-        const lastMarker = dayMarkers[dayMarkers.length - 1];
-        adjacencies.push({
-          id: `${hotelMarker.id}__${firstMarker.id}`,
-          src: hotelMarker,
-          dst: firstMarker,
-          kind: "walk",
-        });
-        if (dayMarkers.length > 1) {
-          adjacencies.push({
-            id: `${lastMarker.id}__${hotelMarker.id}`,
-            src: lastMarker,
-            dst: hotelMarker,
-            kind: "walk",
-          });
-        }
       }
     }
 

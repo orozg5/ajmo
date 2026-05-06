@@ -6,7 +6,6 @@ import { useMutation } from "@tanstack/react-query";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Calendar,
-  Copy,
   MapPin,
   Settings as SettingsIcon,
   Share2,
@@ -14,7 +13,6 @@ import {
 import { toast } from "sonner";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -23,6 +21,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { type DestinationResponse, type Plan, updatePlan } from "@/lib/api";
+import EditPlanDialog from "@/features/plans/components/itinerary/EditPlanDialog";
 import { VISIBILITY_ICON, VISIBILITY_LABEL } from "@/features/plans/utils/visibility";
 
 type PlanHeaderProps = {
@@ -53,6 +52,7 @@ export default function PlanHeader({ plan, destinations, isOwner }: PlanHeaderPr
   const [isEditing, setIsEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(plan.title);
   const [localTitle, setLocalTitle] = useState(plan.title);
+  const [editPlanOpen, setEditPlanOpen] = useState(false);
 
   useEffect(() => {
     setLocalTitle(plan.title);
@@ -102,12 +102,8 @@ export default function PlanHeader({ plan, destinations, isOwner }: PlanHeaderPr
     toast.info("Sharing lands in Phase 5");
   }
 
-  function handleDuplicate() {
-    toast.info("Duplicate lands in Phase 5");
-  }
-
   function handleSettings() {
-    toast.info("Plan settings land in Phase 5");
+    setEditPlanOpen(true);
   }
 
   return (
@@ -184,30 +180,25 @@ export default function PlanHeader({ plan, destinations, isOwner }: PlanHeaderPr
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-ink-subtle">
           {dateRange ? (
-            <Badge variant="outline" className="gap-1.5 bg-background">
+            <span className="inline-flex items-center gap-1.5">
               <Calendar className="size-3.5" strokeWidth={1.5} />
               {dateRange}
-            </Badge>
+            </span>
           ) : null}
-          <Badge variant="outline" className="gap-1.5 bg-background">
+          {dateRange ? <span aria-hidden className="opacity-40">·</span> : null}
+          <span className="inline-flex items-center gap-1.5">
             <VisibilityIcon className="size-3.5" strokeWidth={1.5} />
             {visibilityLabel}
-          </Badge>
-          {destinations.length > 0 ? (
-            destinations.map((dest) => (
-              <Badge variant="secondary" key={dest.id} className="gap-1.5">
-                <MapPin className="size-3.5" strokeWidth={1.5} />
-                {dest.city}, {dest.country}
-              </Badge>
-            ))
-          ) : (
-            <Badge variant="outline" className="gap-1.5 bg-background text-ink-subtle">
-              <MapPin className="size-3.5" strokeWidth={1.5} />
-              No destinations yet
-            </Badge>
-          )}
+          </span>
+          <span aria-hidden className="opacity-40">·</span>
+          <span className="inline-flex items-center gap-1.5">
+            <MapPin className="size-3.5" strokeWidth={1.5} />
+            {destinations.length > 0
+              ? destinations.map((dest) => `${dest.city}, ${dest.country}`).join(" · ")
+              : "No destinations yet"}
+          </span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -220,15 +211,6 @@ export default function PlanHeader({ plan, destinations, isOwner }: PlanHeaderPr
             </TooltipTrigger>
             <TooltipContent>Share this trip (Phase 5)</TooltipContent>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button size="sm" variant="outline" onClick={handleDuplicate}>
-                <Copy className="size-4" strokeWidth={1.5} />
-                Duplicate
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Duplicate as a new draft (Phase 5)</TooltipContent>
-          </Tooltip>
           {isOwner ? (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -237,11 +219,20 @@ export default function PlanHeader({ plan, destinations, isOwner }: PlanHeaderPr
                   Settings
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Plan settings (Phase 5)</TooltipContent>
+              <TooltipContent>Edit trip, destinations, and danger zone</TooltipContent>
             </Tooltip>
           ) : null}
         </div>
       </div>
+
+      {isOwner ? (
+        <EditPlanDialog
+          open={editPlanOpen}
+          onOpenChange={setEditPlanOpen}
+          plan={plan}
+          destinations={destinations}
+        />
+      ) : null}
     </motion.section>
   );
 }

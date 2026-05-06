@@ -25,6 +25,10 @@ function resolve(theme: Theme): "light" | "dark" {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  // Both server and client render with "system" so hydration matches.
+  // The inline bootstrap script in <head> already applied the correct class
+  // on <html> before paint, so the visual is correct from frame 1.
+  // The effect below catches up state to the stored preference after mount.
   const [theme, setThemeState] = useState<Theme>("system");
 
   useEffect(() => {

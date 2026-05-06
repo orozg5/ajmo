@@ -8,7 +8,7 @@
 
 - [x] `backend/app/services/ai/schemas.py` (new) — Pydantic models: `EnrichmentResponse`, `SuggestionsResponse`, `SuggestionItem`, `TransportResponse`, `TransportSuggestion` (with `Literal["same_day","same_day_cross_city","cross_city"]` scope + per-scope validator), `TransportOption`.
 - [x] `backend/app/services/ai/llm.py` — replace `call_llm_with_fallback` with `call_structured[ModelT](feature, schema, prompt, temperature, max_tokens)`. Delete `parse_llm_json`, `strip_markdown_fences`.
-- [x] Per-feature provider chains are the single source of truth: `AI_PROVIDER_CHAIN_ENRICH`, `AI_PROVIDER_CHAIN_SUGGESTIONS`, `AI_PROVIDER_CHAIN_TRANSPORT`, each **required** (no defaults). No global `AI_PROVIDER_CHAIN`.
+- [x] Per-feature provider chains are the single source of truth: `AI_PROVIDER_CHAIN_ENRICH`, `AI_PROVIDER_CHAIN_SUGGESTIONS`, `AI_PROVIDER_CHAIN_TRANSPORT`, each **required** (no defaults). No global `AI_PROVIDER_CHAIN`. (`AI_PROVIDER_CHAIN_TRANSPORT` later removed 2026-05-06 when transport left the LLM — see ADR 2026-05-06.)
 - [x] Token caps + temps: `enrich` T=0 / 1024 tok; `suggestions` T=0.5 / 2048 tok; `transport` T=0.3 / 1024 tok.
 
 ### Speed tuning (dev, Ollama-only)
@@ -52,8 +52,8 @@ Prod flips `AI_PROVIDER_CHAIN_*` envs to cloud providers (e.g. `gemini,groq`); c
 
 ### Frontend
 
-- [x] `frontend/src/features/plans/hooks/useDayTransport.ts` — drop `dismissedPairKeys` in-memory set; rely on backend marker. Now writes `ai_data: { same_day_pair: pairKey } satisfies SameDayMarker` when the user accepts an option.
-- [x] `frontend/src/features/plans/hooks/useCrossCityTransport.ts` — routed through generated client. `frontend/src/lib/api/generated-setup.ts` sets baseUrl from `NEXT_PUBLIC_API_URL` and installs a request interceptor that injects the Supabase bearer token.
+- [x] `frontend/src/features/plans/hooks/useDayTransport.ts` — drop `dismissedPairKeys` in-memory set; rely on backend marker. Now writes `ai_data: { same_day_pair: pairKey } satisfies SameDayMarker` when the user accepts an option. (Subsequently rebuilt 2026-05-06 — `useDayTransport` deleted, replaced by `useSameDayTransportOptions` + `useSameDayTransportInsert` calling the new backend `/transit/{directions,osrm-route}` routes; no LLM in transport at all. See ADR 2026-05-06.)
+- [x] `frontend/src/features/plans/hooks/useCrossCityTransport.ts` — fetches via `apiFetch` from `frontend/src/lib/api/client.ts` (Supabase bearer token injected automatically). (Originally routed through the openapi-ts generated client + `generated-setup.ts`; both deleted 2026-05-05 — see ADR.)
 - [x] Speculative prefetch on autocomplete `onMouseEnter` (150ms dwell) → `queryClient.prefetchQuery(['enrich', name, destination, itemType], …)` for the enrich endpoint. Cancelled on `onMouseLeave`.
 
 ### Smoke tests (pytest)

@@ -4,6 +4,7 @@ import "./globals.css";
 
 import AppShell from "@/components/layout/AppShell";
 import { createClient } from "@/lib/supabase/server";
+import { getProfileChrome } from "@/lib/supabase/profile";
 
 import Providers from "./providers";
 
@@ -25,9 +26,11 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "Ajmo — plan trips together",
-  description: "Collaborative, AI-assisted travel planning.",
+  title: "Ajmo",
+  description: "Collaborative, AI-powered travel planning.",
 };
+
+const themeBootstrapScript = `(function(){try{var s=window.localStorage.getItem("ajmo-theme");var t=(s==="light"||s==="dark"||s==="system")?s:"system";var r=t==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):t;var e=document.documentElement;e.classList.remove("light","dark");e.classList.add(r);e.style.colorScheme=r;}catch(_){}})();`;
 
 export default async function RootLayout({
   children,
@@ -35,24 +38,31 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const supabase = await createClient();
+  // Middleware already validates the session against the auth server on every request.
+  // getSession() reads the (validated) cookie locally — no extra auth-server roundtrip.
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
+  const user = session?.user ?? null;
 
-  const displayName = (user?.user_metadata?.display_name as string | undefined) ?? null;
-  const avatarUrl = (user?.user_metadata?.avatar_url as string | undefined) ?? null;
+  const profile = user ? await getProfileChrome(supabase, user.id) : null;
+  const displayName = profile?.displayName ?? null;
+  const avatarUrl = profile?.avatarUrl ?? null;
+  const username = profile?.username ?? null;
 
   return (
     <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} antialiased`}
-      >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
+      </head>
+      <body className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} antialiased`}>
         <Providers>
           <AppShell
             authenticated={Boolean(user)}
             userEmail={user?.email ?? null}
             userDisplayName={displayName}
             userAvatarUrl={avatarUrl}
+            userUsername={username}
           >
             {children}
           </AppShell>

@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { AiSuggestion, CrossCityMarker, EnrichedItem, SameDayMarker } from "./ai";
+import type { AiSuggestion, CrossCityMarker, EnrichedItem, SameDayTransportData } from "./ai";
 
 export type PlanVisibility = "private" | "link" | "friends" | "public";
 
@@ -38,12 +38,12 @@ export interface CreatePlanPayload {
 
 export interface UpdatePlanPayload {
   title?: string;
-  description?: string;
-  date_from?: string;
-  date_to?: string;
+  description?: string | null;
+  date_from?: string | null;
+  date_to?: string | null;
   visibility?: PlanVisibility;
-  cover_image_path?: string;
-  cover_image_url?: string;
+  cover_image_path?: string | null;
+  cover_image_url?: string | null;
 }
 
 export type PlanScope = "owner" | "member" | "public";
@@ -61,7 +61,8 @@ export interface PlanItem {
   duration_minutes: number | null;
   sort_key: string | null;
   sort_order: number | null;
-  ai_data: EnrichedItem | CrossCityMarker | SameDayMarker | null;
+  place_id: string | null;
+  ai_data: EnrichedItem | CrossCityMarker | SameDayTransportData | null;
   destination_id: string | null;
 }
 
@@ -85,7 +86,8 @@ export interface AddItemPayload {
   duration_minutes?: number;
   sort_key?: string;
   sort_order?: number;
-  ai_data?: EnrichedItem | CrossCityMarker | SameDayMarker | null;
+  place_id?: string | null;
+  ai_data?: EnrichedItem | CrossCityMarker | SameDayTransportData | null;
   destination_id?: string;
 }
 
@@ -148,6 +150,13 @@ export interface CreateDestinationPayload {
   day_numbers: number[];
 }
 
+export interface UpdateDestinationPayload {
+  country?: string;
+  city?: string;
+  sort_order?: number;
+  day_numbers?: number[];
+}
+
 export const createPlan = (data: CreatePlanPayload): Promise<Plan> =>
   apiFetch<Plan>("/plans", {
     method: "POST",
@@ -161,6 +170,9 @@ export const updatePlan = (id: string, data: UpdatePlanPayload): Promise<Plan> =
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
+
+export const deletePlan = (id: string): Promise<void> =>
+  apiFetch<void>(`/plans/${id}`, { method: "DELETE" });
 
 export const getPlan = (id: string, accessToken?: string | null): Promise<Plan> =>
   apiFetch<Plan>(`/plans/${id}`, undefined, accessToken);
@@ -255,3 +267,17 @@ export const createDestination = (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+
+export const updateDestination = (
+  planId: string,
+  destinationId: string,
+  payload: UpdateDestinationPayload,
+): Promise<DestinationResponse> =>
+  apiFetch<DestinationResponse>(`/plans/${planId}/destinations/${destinationId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+export const deleteDestination = (planId: string, destinationId: string): Promise<void> =>
+  apiFetch<void>(`/plans/${planId}/destinations/${destinationId}`, { method: "DELETE" });

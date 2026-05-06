@@ -42,7 +42,7 @@
 - Mid-day transit modes beyond walk (Phase 8 or later).
 - Turn-by-turn directions.
 - Offline tile caching tuning — initial 50MB LRU is set in Phase 7.
-- Transport-mode label on intercity great-circle arcs — needs a small `useDayTransport` join in `useRoutes`; deferred to a polish pass.
+- Transport-mode label on intercity great-circle arcs — originally planned as a `useDayTransport` join in `useRoutes`; deferred. After the 2026-05-06 transport rebuild this would now read from `ai_data.{mode,distance_meters,duration_seconds}` on transport `plan_items` directly (no hook needed). See ADR 2026-05-06.
 
 ## Verification
 

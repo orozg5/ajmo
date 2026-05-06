@@ -9,13 +9,14 @@ src/
 │   ├── auth/callback/route.ts    OAuth code-exchange handler (not a page)
 │   ├── plans/[id]/               Itinerary editor
 │   ├── plans/new/                Plan creation wizard
+│   ├── settings/                 Shared settings shell — layout.tsx + page.tsx (landing/redirect)
 │   ├── settings/preferences/     User preferences
 │   └── settings/profile/         Profile edit (Phase 2)
 ├── components/
 │   ├── ui/                       Shadcn/UI primitives only — never put feature code here
 │   ├── layout/                   AppShell, Header, Sidebar, ErrorBoundary
 │   ├── brand/                    Logo and brand marks
-│   └── theme/                    ThemeProvider, ThemeToggle
+│   └── theme/                    ThemeProvider, ThemeToggle, ThemedToaster
 ├── features/                     Feature-scoped components and hooks
 │   ├── auth/components/          LoginForm, RegisterForm, LogoutButton
 │   ├── plans/components/         All itinerary UI components
@@ -23,13 +24,13 @@ src/
 │   ├── map/                      MapLibre components (Phase 4)
 │   ├── collab/                   Yjs providers, awareness, presence (Phase 6)
 │   ├── social/                   Friends, invites, comments, reactions, ratings (Phase 5)
-│   └── settings/components/      PreferencesForm, ProfileForm
+│   └── settings/                 components/ (PreferencesForm, ProfileForm, SettingsTabs) + constants.ts (interest/dietary/budget enums)
 ├── lib/
 │   ├── api/
-│   │   ├── generated/            openapi-ts output — run `npm run gen:api` to refresh
-│   │   ├── client.ts             Runtime fetch wrapper (auth headers, error shaping)
+│   │   ├── client.ts             Runtime fetch wrapper (auth headers, error shaping, SSE parser)
+│   │   ├── plans.ts, ai.ts, transit.ts, users.ts  Hand-typed request functions per domain
 │   │   └── index.ts              Barrel
-│   ├── supabase/                 client.ts (browser) + server.ts (SSR/server components)
+│   ├── supabase/                 client.ts (browser) + server.ts (SSR) + profile.ts (RLS-scoped profile chrome fetch)
 │   ├── yjs/                      Doc factory, providers, React hooks (Phase 6)
 │   ├── map/                      MapLibre init, style, marker helpers (Phase 4)
 │   ├── offline/                  Service worker bootstrap, write queue, query persister (Phase 7)
@@ -59,7 +60,7 @@ src/
 - App Router only — no `pages/` directory.
 - Server components by default; add `"use client"` only when the component needs event handlers, hooks, or browser APIs.
 - Supabase is queried in server components via `@/lib/supabase/server` — never query Supabase directly from client components.
-- All FastAPI calls go through `@/lib/api/` (prefer `generated/` once a route is covered by openapi-ts).
+- All FastAPI calls go through `@/lib/api/` — hand-typed shims per domain (`plans.ts`, `ai.ts`, etc.) sitting on `client.ts`'s `apiFetch`/`apiSse`.
 - Always use Shadcn/UI components — check `components/ui/` before installing a new package.
 - Tailwind v4 for all styling — no CSS modules or styled-components.
 - Component filenames must be PascalCase (`ItemSearch.tsx`, `CreatePlanWizard.tsx`) — never kebab-case.
@@ -87,7 +88,6 @@ src/
 
 ## Hard constraints
 
-- Never import from `@/lib/api/generated/` before running `npm run gen:api` once per session if the backend OpenAPI has changed.
 - Never put feature components in `components/ui/` — that folder is shadcn primitives only.
 - Never touch Yjs state outside `lib/yjs/` and `features/*/hooks/*` — components should never call `doc.transact(...)` directly.
 - Never persist raw query responses that contain an access token.

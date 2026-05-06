@@ -4,7 +4,6 @@ import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
-  addDay as apiAddDay,
   addItem as apiAddItem,
   getDays as apiGetDays,
   removeDay as apiRemoveDay,
@@ -26,7 +25,6 @@ export interface UsePlanItineraryOptions {
 
 export interface UsePlanItineraryReturn {
   days: PlanDay[];
-  addDay: () => Promise<PlanDay>;
   removeDay: (dayId: string) => void;
   addItem: (dayId: string, payload: AddItemPayload) => Promise<PlanItem>;
   removeItem: (dayId: string, itemId: string) => void;
@@ -58,15 +56,6 @@ export function usePlanItinerary({ planId, initialDays }: UsePlanItineraryOption
   });
 
   const days = query.data ?? [];
-
-  const addDayMutation = useMutation({
-    mutationFn: () => apiAddDay(planId),
-    onSuccess: (newDay) => {
-      queryClient.setQueryData<DaysCache>(queryKey, (cache) =>
-        patchDays(cache, (prev) => [...prev, newDay].sort((a, b) => a.day_number - b.day_number)),
-      );
-    },
-  });
 
   const removeDayMutation = useMutation({
     mutationFn: (dayId: string) => apiRemoveDay(planId, dayId),
@@ -147,6 +136,11 @@ export function usePlanItinerary({ planId, initialDays }: UsePlanItineraryOption
       const updatesById = new Map(entries.map((entry) => [entry.id, entry] as const));
       queryClient.setQueryData<DaysCache>(queryKey, (cache) =>
         patchDays(cache, (prev) => {
+          const touchedDayIds = new Set<string>();
+          for (const entry of entries) touchedDayIds.add(entry.day_id);
+          for (const day of prev) {
+            if (day.items.some((i) => updatesById.has(i.id))) touchedDayIds.add(day.id);
+          }
           const allItems = prev.flatMap((day) => day.items);
           const patched = allItems.map((item) => {
             const patch = updatesById.get(item.id);
@@ -160,7 +154,13 @@ export function usePlanItinerary({ planId, initialDays }: UsePlanItineraryOption
           });
           return prev.map((day) => ({
             ...day,
-            items: sortItems(patched.filter((item) => item.day_id === day.id)),
+            items: sortItems(
+              patched.filter(
+                (item) =>
+                  item.day_id === day.id &&
+                  !(touchedDayIds.has(day.id) && item.item_type === "transport"),
+              ),
+            ),
           }));
         }),
       );
@@ -193,7 +193,6 @@ export function usePlanItinerary({ planId, initialDays }: UsePlanItineraryOption
   });
 
   const isLoading =
-    addDayMutation.isPending ||
     removeDayMutation.isPending ||
     addItemMutation.isPending ||
     removeItemMutation.isPending ||
@@ -216,7 +215,6 @@ export function usePlanItinerary({ planId, initialDays }: UsePlanItineraryOption
 
   return {
     days,
-    addDay: () => addDayMutation.mutateAsync(),
     removeDay: (dayId: string) => removeDayMutation.mutate(dayId),
     addItem,
     removeItem: (dayId: string, itemId: string) => removeItemMutation.mutate({ dayId, itemId }),

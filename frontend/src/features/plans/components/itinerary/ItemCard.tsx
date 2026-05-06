@@ -4,7 +4,6 @@ import Image from "next/image";
 import { useState } from "react";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
-import { motion, useReducedMotion } from "framer-motion";
 import {
   Bookmark,
   ChevronDown,
@@ -15,6 +14,7 @@ import {
   Heart,
   ImageOff,
   MapPin,
+  MapPinOff,
   ThumbsUp,
   Timer,
   Trash2,
@@ -40,7 +40,6 @@ interface Props {
   onRemove: () => void;
   onNotesUpdate: (notes: string | null) => void;
   isHighlighted?: boolean;
-  isOrphan?: boolean;
   onHoverChange?: (itemId: string, hovered: boolean) => void;
 }
 
@@ -51,7 +50,6 @@ export default function ItemCard(props: Props) {
         item={props.item}
         onRemove={props.onRemove}
         isHighlighted={props.isHighlighted}
-        isOrphan={props.isOrphan}
         onHoverChange={props.onHoverChange}
       />
     );
@@ -65,9 +63,8 @@ function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = f
 
   const [isExpanded, setIsExpanded] = useState(false);
   const [notes, setNotes] = useState(item.notes ?? "");
-  const reducedMotion = useReducedMotion();
 
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver, active } = useSortable({
     id: item.id,
   });
 
@@ -78,19 +75,26 @@ function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = f
   const location = item.location ?? enriched?.location ?? null;
   const imageUrl = enriched?.image_url ?? null;
   const duration = enriched?.duration;
+  const hasCoordinates = enriched?.lat != null && enriched?.lng != null;
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.6 : 1,
+    opacity: isDragging ? 0.4 : 1,
   } as const;
+
+  const showDropIndicator = isOver && active && active.id !== item.id;
 
   function handleNotesBlur() {
     onNotesUpdate(notes.trim() === "" ? null : notes.trim());
   }
 
   return (
-    <motion.article
+    <>
+      {showDropIndicator ? (
+        <div aria-hidden className="-mb-1 h-1 rounded-full bg-secondary/80" />
+      ) : null}
+    <article
       ref={setNodeRef}
       style={style}
       data-item-id={item.id}
@@ -98,28 +102,23 @@ function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = f
       onMouseLeave={() => onHoverChange?.(item.id, false)}
       onFocus={() => onHoverChange?.(item.id, true)}
       onBlur={() => onHoverChange?.(item.id, false)}
-      whileHover={reducedMotion || isDragging ? undefined : { y: -2 }}
-      transition={{ duration: 0.2, ease: "easeOut" }}
       className={cn(
-        "relative overflow-hidden rounded-2xl border border-border bg-card p-3 pl-4",
+        "relative overflow-hidden rounded-2xl border border-border bg-card p-3",
         "shadow-[0_1px_0_rgba(10,10,12,0.04),0_8px_24px_-12px_rgba(10,10,12,0.08)]",
         "hover:shadow-[0_1px_0_rgba(10,10,12,0.06),0_14px_30px_-12px_rgba(10,10,12,0.12)]",
-        isDragging && "ring-2 ring-primary/60",
+        typeStyle?.tint,
         isHighlighted && "ring-2 ring-secondary/70",
       )}
     >
-      {typeStyle ? (
-        <span aria-hidden className={cn("absolute inset-y-0 left-0 w-1", typeStyle.accent)} />
-      ) : null}
       <div className="flex items-start gap-3">
         <button
           type="button"
           aria-label={`Drag ${item.title}`}
-          className="mt-1 flex size-7 shrink-0 cursor-grab items-center justify-center rounded-md text-ink-subtle hover:bg-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary active:cursor-grabbing"
+          className="mt-1 flex size-9 shrink-0 cursor-grab items-center justify-center rounded-md bg-muted/50 text-ink-subtle hover:bg-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary active:cursor-grabbing"
           {...attributes}
           {...listeners}
         >
-          <GripVertical className="size-4" strokeWidth={1.5} />
+          <GripVertical className="size-5" strokeWidth={1.5} />
         </button>
 
         <div className="size-[72px] shrink-0 overflow-hidden rounded-xl border border-border bg-muted">
@@ -143,10 +142,15 @@ function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = f
           <div className="flex items-start justify-between gap-2">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <span className="truncate font-semibold text-ink">{item.title}</span>
-              <Badge variant="secondary" className="shrink-0 gap-1 text-[11px]">
-                {TypeIcon ? <TypeIcon className="size-3" strokeWidth={1.5} /> : null}
-                {typeStyle?.label ?? item.item_type}
-              </Badge>
+              {typeStyle ? (
+                <Badge
+                  variant="outline"
+                  className={cn("shrink-0 gap-1 text-[11px] font-medium", typeStyle.badge)}
+                >
+                  {TypeIcon ? <TypeIcon className="size-3" strokeWidth={1.75} /> : null}
+                  {typeStyle.label}
+                </Badge>
+              ) : null}
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
@@ -177,10 +181,22 @@ function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = f
           {(location || item.start_time || duration || priceRange) && (
             <div className="flex flex-wrap items-center gap-2 text-xs text-ink-subtle">
               {location ? (
-                <span className="inline-flex max-w-[14rem] items-center gap-1.5 truncate">
-                  <MapPin className="size-3.5" strokeWidth={1.5} />
-                  <span className="truncate">{location}</span>
-                </span>
+                hasCoordinates ? (
+                  <span className="inline-flex max-w-[14rem] items-center gap-1.5 truncate">
+                    <MapPin className="size-3.5" strokeWidth={1.5} />
+                    <span className="truncate">{location}</span>
+                  </span>
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex max-w-[14rem] items-center gap-1.5 truncate text-amber-700 dark:text-amber-400">
+                        <MapPinOff className="size-3.5" strokeWidth={1.5} />
+                        <span className="truncate">{location}</span>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">No coordinates — not shown on map</TooltipContent>
+                  </Tooltip>
+                )
               ) : null}
               {item.start_time ? (
                 <Badge variant="outline" className="gap-1">
@@ -304,6 +320,7 @@ function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = f
           </Tooltip>
         ))}
       </div>
-    </motion.article>
+    </article>
+    </>
   );
 }

@@ -5,13 +5,13 @@ import { useState } from "react";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 
 import { Button } from "@/components/ui/button";
-import { type AddItemPayload, type DestinationResponse, type EnrichedItem, type PlanDay, type PlanItem, type TransportSuggestion } from "@/lib/api";
+import { type AddItemPayload, type DestinationResponse, type EnrichedItem, type PlanDay, type PlanItem } from "@/lib/api";
 import { sortItems } from "@/features/plans/utils/sortKeys";
 import AddNoteInline from "@/features/plans/components/itinerary/AddNoteInline";
-import CrossCityTransitBand from "@/features/plans/components/transport/CrossCityTransitBand";
 import InlineTransportBar from "@/features/plans/components/transport/InlineTransportBar";
 import ItemCard from "@/features/plans/components/itinerary/ItemCard";
 import ItemSearch from "@/features/plans/components/search/ItemSearch";
+import { type SameDayModeOption } from "@/features/plans/hooks/useSameDayTransportOptions";
 
 interface PendingItem {
   enrichedItem: EnrichedItem;
@@ -21,55 +21,12 @@ interface PendingItem {
 }
 
 export interface DayTransportContext {
-  suggestions: Map<string, TransportSuggestion>;
-  isFetching: boolean;
   addingKeys: Set<string>;
   onAddTransportOption: (
-    suggestion: TransportSuggestion,
-    optionIndex: number,
-    extra?: { destinationId?: string; sortOrder?: number },
+    srcItem: PlanItem,
+    dstItem: PlanItem,
+    option: SameDayModeOption,
   ) => void;
-  transportPositions?: Map<string, string>;
-}
-
-function applyTransportPositions(sortedItems: PlanItem[], positions: Map<string, string>): PlanItem[] {
-  const result = [...sortedItems];
-  for (const [transportId, sourceItemId] of positions) {
-    const transport = result.find((i) => i.id === transportId);
-    const source = result.find((i) => i.id === sourceItemId);
-    if (!transport || !source || transport.destination_id !== source.destination_id) continue;
-    const transportIdx = result.findIndex((i) => i.id === transportId);
-    const [removed] = result.splice(transportIdx, 1);
-    const sourceIdx = result.findIndex((i) => i.id === sourceItemId);
-    if (sourceIdx === -1) { result.push(removed); continue; }
-    result.splice(sourceIdx + 1, 0, removed);
-  }
-  return result;
-}
-
-function computeOrphanedTransportIds(allSortedItems: PlanItem[]): Set<string> {
-  const orphaned = new Set<string>();
-  for (let i = 0; i < allSortedItems.length; i++) {
-    const item = allSortedItems[i];
-    if (item.item_type !== "transport") continue;
-    const ai = item.ai_data as { same_day_pair?: string } | null;
-    const pair = ai?.same_day_pair;
-    if (!pair) continue;
-    const sourceId = pair.split("->")[0];
-    if (!sourceId) continue;
-
-    let prevNonTransport: PlanItem | null = null;
-    for (let j = i - 1; j >= 0; j--) {
-      if (allSortedItems[j].item_type !== "transport") {
-        prevNonTransport = allSortedItems[j];
-        break;
-      }
-    }
-    if (!prevNonTransport || prevNonTransport.id !== sourceId) {
-      orphaned.add(item.id);
-    }
-  }
-  return orphaned;
 }
 
 type RenderSlot =
@@ -115,6 +72,7 @@ export default function DayView({ day, destinations, onAddItem, onRemoveItem, on
       ai_data: aiData,
       destination_id: pendingItem.destinationId,
       location: pendingItem.enrichedItem.location ?? undefined,
+      place_id: pendingItem.enrichedItem.place_id ?? undefined,
     };
 
     try {
@@ -128,10 +86,7 @@ export default function DayView({ day, destinations, onAddItem, onRemoveItem, on
     }
   }
 
-  const rawSorted = sortItems(day.items);
-  const positions = dayTransport?.transportPositions;
-  const allSortedItems = positions && positions.size > 0 ? applyTransportPositions(rawSorted, positions) : rawSorted;
-  const orphanedTransportIds = computeOrphanedTransportIds(allSortedItems);
+  const allSortedItems = sortItems(day.items);
 
   const slots: RenderSlot[] = [];
 
@@ -152,7 +107,9 @@ export default function DayView({ day, destinations, onAddItem, onRemoveItem, on
 
   slots.sort((a, b) => a.anchor - b.anchor);
 
-  const sortableIds = allSortedItems.map((item) => item.id);
+  const sortableIds = allSortedItems
+    .filter((i) => i.item_type !== "transport")
+    .map((item) => item.id);
 
   return (
     <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
@@ -169,7 +126,6 @@ export default function DayView({ day, destinations, onAddItem, onRemoveItem, on
                   onRemove={() => onRemoveItem(day.id, slot.item.id)}
                   onNotesUpdate={(notes) => onUpdateItemNotes(slot.item.id, notes)}
                   isHighlighted={highlightedItemId === slot.item.id}
-                  isOrphan={orphanedTransportIds.has(slot.item.id)}
                   onHoverChange={onItemHoverChange}
                 />
               );
@@ -177,28 +133,53 @@ export default function DayView({ day, destinations, onAddItem, onRemoveItem, on
 
             const { dest } = slot;
             const sectionItems = allSortedItems.filter((i) => i.destination_id === dest.id);
+            // Direction is data, not heuristic: an item is an arrival in the
+            // section whose city is its destination_destination_id, and a
+            // departure in the section whose city is its source_destination_id.
+            // Falls back to the legacy sort_order vs section-min split for any
+            // items written before these fields existed.
+            const crossCityMeta = (item: PlanItem) =>
+              item.ai_data as
+                | { cross_city_pair?: string; source_destination_id?: string; destination_destination_id?: string }
+                | null;
             const crossCityInSection = sectionItems.filter(
-              (i) => Boolean((i.ai_data as { cross_city_pair?: string } | null)?.cross_city_pair),
+              (i) => Boolean(crossCityMeta(i)?.cross_city_pair),
             );
             const regularInSection = sectionItems.filter(
-              (i) => !(i.ai_data as { cross_city_pair?: string } | null)?.cross_city_pair,
+              (i) => !crossCityMeta(i)?.cross_city_pair,
             );
             const minRegularSort = regularInSection.length > 0
               ? Math.min(...regularInSection.map((i) => i.sort_order ?? 0))
               : Infinity;
-            const arrivals = crossCityInSection.filter((i) => (i.sort_order ?? 0) < minRegularSort);
-            const departures = crossCityInSection.filter((i) => (i.sort_order ?? 0) >= minRegularSort);
+            const arrivals = crossCityInSection.filter((i) => {
+              const meta = crossCityMeta(i);
+              if (meta?.destination_destination_id) return meta.destination_destination_id === dest.id;
+              if (meta?.source_destination_id) return false;
+              return (i.sort_order ?? 0) < minRegularSort;
+            });
+            const departures = crossCityInSection.filter((i) => {
+              const meta = crossCityMeta(i);
+              if (meta?.source_destination_id) return meta.source_destination_id === dest.id;
+              if (meta?.destination_destination_id) return false;
+              return (i.sort_order ?? 0) >= minRegularSort;
+            });
             const cityLabel = `${dest.city}, ${dest.country}`;
 
             return (
               <div key={dest.id} className="space-y-3">
                 {arrivals.length > 0 && (
-                  <CrossCityTransitBand
-                    items={arrivals}
-                    role="arrival"
-                    cityLabel={cityLabel}
-                    onRemove={(itemId) => onRemoveItem(day.id, itemId)}
-                  />
+                  <div className="space-y-1">
+                    {arrivals.map((item) => (
+                      <ItemCard
+                        key={item.id}
+                        item={item}
+                        onRemove={() => onRemoveItem(day.id, item.id)}
+                        onNotesUpdate={(notes) => onUpdateItemNotes(item.id, notes)}
+                        isHighlighted={highlightedItemId === item.id}
+                        onHoverChange={onItemHoverChange}
+                      />
+                    ))}
+                  </div>
                 )}
 
                 <p className="text-xs font-semibold uppercase tracking-wide text-ink-subtle">
@@ -239,9 +220,13 @@ export default function DayView({ day, destinations, onAddItem, onRemoveItem, on
                   <div className="space-y-3">
                     {regularInSection.map((item, itemIdx) => {
                       const nextItem = regularInSection[itemIdx + 1];
-                      const suggestion = dayTransport?.suggestions.get(item.id);
-                      const isAdding = suggestion
-                        ? (dayTransport?.addingKeys.has(`${suggestion.source_item_id}-${suggestion.destination_item_id}`) ?? false)
+                      const showBar =
+                        Boolean(nextItem) &&
+                        item.item_type !== "transport" &&
+                        nextItem?.item_type !== "transport";
+                      const pairKey = nextItem ? `${item.id}-${nextItem.id}` : "";
+                      const isAdding = pairKey
+                        ? dayTransport?.addingKeys.has(pairKey) ?? false
                         : false;
 
                       return (
@@ -251,27 +236,18 @@ export default function DayView({ day, destinations, onAddItem, onRemoveItem, on
                             onRemove={() => onRemoveItem(day.id, item.id)}
                             onNotesUpdate={(notes) => onUpdateItemNotes(item.id, notes)}
                             isHighlighted={highlightedItemId === item.id}
-                            isOrphan={orphanedTransportIds.has(item.id)}
                             onHoverChange={onItemHoverChange}
                           />
-                          {nextItem && item.item_type !== "transport" && nextItem.item_type !== "transport" && (
+                          {showBar && nextItem ? (
                             <InlineTransportBar
-                              suggestion={suggestion}
-                              isFetching={dayTransport?.isFetching ?? false}
+                              src={item}
+                              dst={nextItem}
                               isAdding={isAdding}
-                              onAdd={(optIdx) => {
-                                if (suggestion && dayTransport) {
-                                  dayTransport.onAddTransportOption(suggestion, optIdx, {
-                                    destinationId: item.destination_id ?? undefined,
-                                    sortOrder:
-                                      item.sort_order != null && nextItem.sort_order != null
-                                        ? Math.floor((item.sort_order + nextItem.sort_order) / 2)
-                                        : undefined,
-                                  });
-                                }
+                              onAdd={(option) => {
+                                dayTransport?.onAddTransportOption(item, nextItem, option);
                               }}
                             />
-                          )}
+                          ) : null}
                         </div>
                       );
                     })}
@@ -279,12 +255,18 @@ export default function DayView({ day, destinations, onAddItem, onRemoveItem, on
                 )}
 
                 {departures.length > 0 && (
-                  <CrossCityTransitBand
-                    items={departures}
-                    role="departure"
-                    cityLabel={cityLabel}
-                    onRemove={(itemId) => onRemoveItem(day.id, itemId)}
-                  />
+                  <div className="space-y-1">
+                    {departures.map((item) => (
+                      <ItemCard
+                        key={item.id}
+                        item={item}
+                        onRemove={() => onRemoveItem(day.id, item.id)}
+                        onNotesUpdate={(notes) => onUpdateItemNotes(item.id, notes)}
+                        isHighlighted={highlightedItemId === item.id}
+                        onHoverChange={onItemHoverChange}
+                      />
+                    ))}
+                  </div>
                 )}
               </div>
             );

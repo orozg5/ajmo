@@ -28,7 +28,6 @@ AI enriches plan items with live data (description, price, hours) using RAG via 
 - Frontend: `cd frontend && npm run dev` (localhost:3000)
 - Backend: `cd backend && .venv\Scripts\activate && uvicorn main:app --reload` (localhost:8000)
 - Collab (Phase 6+): `cd collab && npm run dev` (localhost:1234)
-- Regenerate API client: `cd frontend && npm run gen:api` — hits backend `/openapi.json`, writes `frontend/src/lib/api/generated/`
 
 ## Resume-across-sessions
 

@@ -2,8 +2,17 @@
 
 import { useCallback, useRef, useState } from "react";
 
-import { streamCrossCityTransportSuggestions, type AddItemPayload, type CrossCityMarker, type TransportSuggestion } from "@/lib/api";
+import {
+  streamCrossCityTransportSuggestions,
+  type AddItemPayload,
+  type CrossCityTransportData,
+  type TransportSuggestion,
+} from "@/lib/api";
 import { isAbortError } from "@/lib/utils";
+import {
+  formatDistance,
+  formatDuration,
+} from "@/features/plans/utils/transportFormat";
 
 export interface UseCrossCityTransportOptions {
   planId: string;
@@ -14,7 +23,6 @@ export interface UseCrossCityTransportReturn {
   isLoading: boolean;
   error: string | null;
   isOpen: boolean;
-  hasFetched: boolean;
   fetchSuggestions: () => Promise<void>;
   openPanel: () => void;
   closePanel: () => void;
@@ -33,7 +41,6 @@ export function useCrossCityTransport({ planId }: UseCrossCityTransportOptions):
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [hasFetched, setHasFetched] = useState(false);
   const [addingKeys, setAddingKeys] = useState<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
 
@@ -54,9 +61,6 @@ export function useCrossCityTransport({ planId }: UseCrossCityTransportOptions):
         },
         controller.signal,
       );
-      if (!controller.signal.aborted) {
-        setHasFetched(true);
-      }
     } catch (err) {
       if (!isAbortError(err)) {
         setError("Cross-city transport suggestions are temporarily unavailable.");
@@ -86,17 +90,36 @@ export function useCrossCityTransport({ planId }: UseCrossCityTransportOptions):
       setAddingKeys((prev) => new Set(prev).add(key));
 
       try {
+        const summaryParts: string[] = [];
+        if (option.duration_seconds != null) summaryParts.push(formatDuration(option.duration_seconds));
+        if (option.distance_meters != null) summaryParts.push(formatDistance(option.distance_meters));
+        if (option.transit_summary) summaryParts.push(option.transit_summary);
+
         const noteParts = [
           `From ${suggestion.source_item_title ?? suggestion.source_city ?? "?"} to ${suggestion.destination_item_title ?? suggestion.destination_city ?? "?"}`,
-          option.one_line,
-        ].filter(Boolean);
+          summaryParts.join(" · ") || null,
+        ].filter(Boolean) as string[];
 
-        // Store a cross_city_pair marker in ai_data so the backend can detect
-        // this transition as covered on subsequent fetches.
-        const pairKey =
-          suggestion.source_item_id && suggestion.destination_item_id
-            ? `${suggestion.source_item_id}->${suggestion.destination_item_id}`
-            : `${suggestion.source_city}->${suggestion.destination_city}`;
+        // Keyed by (source_destination_id -> destination_destination_id) so the
+        // backend can dedup the same way it builds candidate pairs. Carrying
+        // both destination ids on the item also lets DayView decide whether
+        // this transport is an arrival or departure for a given section
+        // without inferring direction from sort_order.
+        if (!suggestion.source_destination_id || !suggestion.destination_destination_id) {
+          throw new Error("Cross-city suggestion is missing destination ids");
+        }
+        const pairKey = `${suggestion.source_destination_id}->${suggestion.destination_destination_id}`;
+
+        const aiData: CrossCityTransportData = {
+          cross_city_pair: pairKey,
+          source_destination_id: suggestion.source_destination_id,
+          destination_destination_id: suggestion.destination_destination_id,
+          mode: option.mode,
+          duration_seconds: option.duration_seconds,
+          distance_meters: option.distance_meters,
+          is_estimate: option.is_estimate,
+          transit_summary: option.transit_summary,
+        };
 
         const payload: AddItemPayload = {
           item_type: "transport",
@@ -105,14 +128,12 @@ export function useCrossCityTransport({ planId }: UseCrossCityTransportOptions):
           location: suggestion.destination_item_location ?? undefined,
           destination_id: extra?.destinationId,
           sort_order: extra?.sortOrder,
-          ai_data: { cross_city_pair: pairKey } satisfies CrossCityMarker,
+          ai_data: aiData,
         };
         await onAddItem(dayId, payload);
         // Remove from suggestions list so it disappears immediately in the panel.
         setSuggestions((prev) => prev.filter((s) => {
-          const sKey = s.source_item_id && s.destination_item_id
-            ? `${s.source_item_id}->${s.destination_item_id}`
-            : `${s.source_city}->${s.destination_city}`;
+          const sKey = `${s.source_destination_id}->${s.destination_destination_id}`;
           return sKey !== pairKey;
         }));
       } finally {
@@ -126,5 +147,5 @@ export function useCrossCityTransport({ planId }: UseCrossCityTransportOptions):
     [],
   );
 
-  return { suggestions, isLoading, error, isOpen, hasFetched, fetchSuggestions, openPanel, closePanel, addingKeys, addOption };
+  return { suggestions, isLoading, error, isOpen, fetchSuggestions, openPanel, closePanel, addingKeys, addOption };
 }

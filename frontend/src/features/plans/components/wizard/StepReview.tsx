@@ -4,11 +4,14 @@ import Image from "next/image";
 import { useFormContext } from "react-hook-form";
 
 import { Badge } from "@/components/ui/badge";
-import type { LocalDestination } from "@/features/plans/hooks/useDestinations";
+import {
+  type DestinationRow,
+  destinationsForSubmit,
+} from "@/features/plans/hooks/useDestinations";
 import type { WizardValues } from "@/features/plans/components/wizard/schema";
 
 type StepReviewProps = {
-  destinations: LocalDestination[];
+  rows: DestinationRow[];
 };
 
 function formatDate(value: string | undefined): string {
@@ -18,10 +21,11 @@ function formatDate(value: string | undefined): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-export default function StepReview({ destinations }: StepReviewProps) {
+export default function StepReview({ rows }: StepReviewProps) {
   const form = useFormContext<WizardValues>();
   const values = form.watch();
   const coverUrl = values.cover_image_url ?? null;
+  const filledRows = destinationsForSubmit(rows);
 
   return (
     <div className="space-y-5">
@@ -55,10 +59,10 @@ export default function StepReview({ destinations }: StepReviewProps) {
 
           <div className="flex flex-wrap gap-2 text-sm">
             <Badge variant="outline">{formatDate(values.date_from)} → {formatDate(values.date_to)}</Badge>
-            {destinations.length > 0 ? (
-              destinations.map((dest, index) => (
-                <Badge variant="secondary" key={`${dest.city}-${index}`}>
-                  {dest.city}, {dest.country}
+            {filledRows.length > 0 ? (
+              filledRows.map((row) => (
+                <Badge variant="secondary" key={row.id}>
+                  {row.city}, {row.country}
                 </Badge>
               ))
             ) : (

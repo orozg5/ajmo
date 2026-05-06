@@ -12,7 +12,11 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { createDestination, createPlan } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { useDestinations } from "@/features/plans/hooks/useDestinations";
+import {
+  destinationsForSubmit,
+  useDestinations,
+  validateRowsForSubmit,
+} from "@/features/plans/hooks/useDestinations";
 import { useSignedUpload } from "@/features/plans/hooks/useCoverUpload";
 import StepCoverImage from "@/features/plans/components/wizard/StepCoverImage";
 import StepDestinations from "@/features/plans/components/wizard/StepDestinations";
@@ -30,7 +34,6 @@ export default function CreatePlanWizard() {
   const reducedMotion = useReducedMotion();
   const [stepIndex, setStepIndex] = useState(0);
   const [direction, setDirection] = useState<1 | -1>(1);
-  const [tempCoverPath, setTempCoverPath] = useState<string | null>(null);
   const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
 
   const form = useForm<WizardValues>({
@@ -47,7 +50,8 @@ export default function CreatePlanWizard() {
   });
 
   const destinationsController = useDestinations();
-  const { destinations } = destinationsController;
+  const { rows } = destinationsController;
+  const [destinationsError, setDestinationsError] = useState<string | null>(null);
 
   const coverUpload = useSignedUpload("plan-cover");
 
@@ -62,7 +66,6 @@ export default function CreatePlanWizard() {
       const result = await coverUpload.upload(file);
       form.setValue("cover_image_path", result.path, { shouldDirty: true });
       form.setValue("cover_image_url", result.publicUrl, { shouldDirty: true });
-      setTempCoverPath(result.path);
     } catch {
       toast.error("Couldn't upload the cover. Try again?");
     }
@@ -71,7 +74,6 @@ export default function CreatePlanWizard() {
   function handleClearCover() {
     if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
     setLocalPreviewUrl(null);
-    setTempCoverPath(null);
     form.setValue("cover_image_path", undefined);
     form.setValue("cover_image_url", undefined);
     coverUpload.reset();
@@ -84,9 +86,14 @@ export default function CreatePlanWizard() {
       const ok = await form.trigger(["title"]);
       if (!ok) return;
     }
-    if (stepIndex === 1 && destinations.length === 0) {
-      toast.error("Add at least one destination to continue.");
-      return;
+    if (stepIndex === 1) {
+      const validation = validateRowsForSubmit(rows);
+      if (!validation.ok) {
+        setDestinationsError(validation.error ?? null);
+        toast.error(validation.error);
+        return;
+      }
+      setDestinationsError(null);
     }
     setDirection(1);
     setStepIndex((index) => Math.min(index + 1, STEPS.length - 1));
@@ -99,6 +106,15 @@ export default function CreatePlanWizard() {
 
   async function handleSubmit() {
     const values = form.getValues();
+    const validation = validateRowsForSubmit(rows);
+    if (!validation.ok) {
+      setDestinationsError(validation.error ?? null);
+      toast.error(validation.error);
+      setDirection(-1);
+      setStepIndex(1);
+      return;
+    }
+    const submitRows = destinationsForSubmit(rows);
     try {
       const plan = await submitMutation.mutateAsync({
         title: values.title,
@@ -109,12 +125,12 @@ export default function CreatePlanWizard() {
         cover_image_url: values.cover_image_url,
       });
 
-      for (let i = 0; i < destinations.length; i++) {
+      for (let i = 0; i < submitRows.length; i++) {
         await createDestination(plan.id, {
-          country: destinations[i].country,
-          city: destinations[i].city,
+          country: submitRows[i].country.trim(),
+          city: submitRows[i].city.trim(),
           sort_order: i,
-          day_numbers: destinations[i].dayNumbers,
+          day_numbers: submitRows[i].dayNumbers,
         });
       }
 
@@ -178,7 +194,10 @@ export default function CreatePlanWizard() {
           >
             {stepIndex === 0 ? <StepTitleDates /> : null}
             {stepIndex === 1 ? (
-              <StepDestinations destinationsController={destinationsController} />
+              <StepDestinations
+                destinationsController={destinationsController}
+                error={destinationsError}
+              />
             ) : null}
             {stepIndex === 2 ? (
               <StepCoverImage
@@ -189,7 +208,7 @@ export default function CreatePlanWizard() {
                 onClear={handleClearCover}
               />
             ) : null}
-            {stepIndex === 3 ? <StepReview destinations={destinations} /> : null}
+            {stepIndex === 3 ? <StepReview rows={rows} /> : null}
           </motion.div>
         </AnimatePresence>
       </FormProvider>
@@ -223,12 +242,6 @@ export default function CreatePlanWizard() {
           </Button>
         )}
       </div>
-
-      {tempCoverPath ? (
-        <p className="text-xs text-ink-subtle">
-          Cover ready: <span className="font-mono">{tempCoverPath}</span>
-        </p>
-      ) : null}
     </div>
   );
 }

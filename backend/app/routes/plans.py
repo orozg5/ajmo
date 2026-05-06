@@ -13,6 +13,7 @@ from app.services.plans.crud import (
     list_user_plans,
     update_plan,
 )
+from app.services.plans.days import DateShrinkBlocked
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +78,12 @@ async def update_plan_route(
     body: PlanUpdate,
     current_user: str = Depends(get_current_user),
 ) -> PlanResponse:
-    """Partially update a plan. yjs_state is never touched here."""
+    """Partially update a plan. Owner-only — non-owners receive 404. yjs_state is never touched here."""
     try:
-        return await update_plan(plan_id, body.model_dump(mode="json", exclude_none=True))
+        payload = body.model_dump(mode="json", exclude_unset=True)
+        return await update_plan(plan_id, current_user, payload)
+    except DateShrinkBlocked as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception:
@@ -92,9 +96,9 @@ async def delete_plan_route(
     plan_id: str,
     current_user: str = Depends(get_current_user),
 ) -> Response:
-    """Delete a plan by id."""
+    """Delete a plan by id. Owner-only — non-owners receive 404."""
     try:
-        await delete_plan(plan_id)
+        await delete_plan(plan_id, current_user)
         return Response(status_code=204)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

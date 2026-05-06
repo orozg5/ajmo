@@ -8,11 +8,9 @@
 | `enrich`               | Gemini 2.5 Flash → Groq 70B   | Ollama         |
 | `suggestions`          | Gemini 2.5 Flash → Groq 70B   | Ollama         |
 | `suggestions_next`     | Gemini 2.5 Flash → Groq 70B   | Ollama         |
-| `transport`            | Groq Llama-3.1-8B-Instant     | Ollama         |
-| `transport_cross_city` | Groq Llama-3.1-8B-Instant     | Ollama         |
 | `summary` (future)     | Gemini 2.5 Flash              | —              |
 
-Three required env vars drive this — `AI_PROVIDER_CHAIN_ENRICH`, `AI_PROVIDER_CHAIN_SUGGESTIONS`, `AI_PROVIDER_CHAIN_TRANSPORT`. Each is a comma-separated provider list, resolved per call by `chain_for_feature(feature)`. There is **no global `AI_PROVIDER_CHAIN` fallback** — unknown feature names raise `ValueError`, and missing envs fail `Settings()` validation at boot. Dev points all three at `ollama`; prod flips them to cloud providers.
+Two required env vars drive this — `AI_PROVIDER_CHAIN_ENRICH`, `AI_PROVIDER_CHAIN_SUGGESTIONS`. Each is a comma-separated provider list, resolved per call by `chain_for_feature(feature)`. There is **no global `AI_PROVIDER_CHAIN` fallback** — unknown feature names raise `ValueError`, and missing envs fail `Settings()` validation at boot. Dev points both at `ollama`; prod flips them to cloud providers. Transport routing is no longer LLM-driven — see [`ARCHITECTURE.md`](ARCHITECTURE.md) §Data flows for the OSRM + Transitous + flight-estimator chain (ADR 2026-05-06).
 
 ## Dev latency tuning (Ollama-only)
 
@@ -22,7 +20,7 @@ In dev the pipeline is tuned for a single local model serving every feature, one
 - `OLLAMA_KEEP_ALIVE=30m` — model stays resident; cold-load cost is paid once per dev session.
 - `OLLAMA_NUM_CTX=4096` — tight context window; every prompt in this pipeline fits comfortably.
 - `OLLAMA_REASONING=false` — disables thinking/CoT tokens on reasoning-capable models.
-- `num_predict` per feature: enrich `1024`, suggestions `2048`, transport `1024` — hard caps on generated length (mapped from `max_tokens` in `call_structured`).
+- `num_predict` per feature: enrich `1024`, suggestions `2048` — hard caps on generated length (mapped from `max_tokens` in `call_structured`).
 - Tavily `search_depth="basic"` by default; `"advanced"` only for hotels or a post-miss retry.
 - Speculative prefetch on autocomplete hover warms the 24h cache before selection (most prefetches hit `ai_attraction_cache` — free).
 
@@ -56,24 +54,9 @@ class SuggestionItem(BaseModel):
 
 class SuggestionsResponse(BaseModel):
     suggestions: list[SuggestionItem]
-
-class TransportOption(BaseModel):
-    name: str
-    one_line: str   # e.g. "3h 30min · ~$89 · Direct"
-    price_hint: str | None
-
-class TransportSuggestion(BaseModel):
-    pair_index: int
-    scope: Literal["same_day", "same_day_cross_city", "cross_city"]
-    options: list[TransportOption] = Field(min_length=2, max_length=4)
-
-class TransportResponse(BaseModel):
-    suggestions: list[TransportSuggestion]
 ```
 
-Scope validator on `TransportSuggestion`:
-- `cross_city` / `same_day_cross_city`: options must not include any mode in `INTERCITY_FORBIDDEN` = `{walk, metro, city bus, rideshare, uber, lyft, bolt, tram}`. Enforced via a Pydantic `model_validator`; no prose "CRITICAL:" preamble.
-- `same_day` (within-city): no mode restriction; the prompt just advises walk/metro/bus for short distances.
+Transport schemas (`TransportOption`, `TransportSuggestion`, `TransportResponse`) still exist in `services/ai/schemas.py` for legacy callers but are no longer produced by an LLM — see ADR 2026-05-06. Cross-city options now ship as deterministic dicts assembled by `services/transport/cross_city.py` (mode/duration/distance/geometry/transit_summary/is_estimate).
 
 ## Streaming (SSE)
 
@@ -81,11 +64,11 @@ Endpoints that stream:
 
 - `GET /ai/suggestions/stream?plan_id=…` — each yielded suggestion becomes an `event: suggestion` frame.
 - `GET /ai/enrich/stream?name=…&destination=…&item_type=…` — progressive fields as they're materialized from the LLM.
-- `GET /ai/transport-suggestions/stream?plan_id=…&day_id=…` — each pair's options streamed separately.
+- `GET /ai/transport-suggestions/stream?plan_id=…` — cross-city pairs only; each `event: pair` frame is composed from OSRM/Transitous/flight responses (no LLM), yielded as `services/transport/cross_city.py:stream_options_for_pairs` finishes each pair's parallel fan-out.
 
-Frontend uses `EventSource` (or `fetch` + reader when auth headers are needed). Fallback to blocking variants (`/ai/suggestions`, `/ai/transport-suggestions/day`, etc.) when SSE is unavailable — e.g. proxies that strip chunked responses. Streams terminate with `event: done` or `event: error`.
+Frontend uses `EventSource` (or `fetch` + reader when auth headers are needed). Fallback to blocking variants (`/ai/suggestions`, `/ai/transport-suggestions/cross-city`, etc.) when SSE is unavailable — e.g. proxies that strip chunked responses. Streams terminate with `event: done` or `event: error`.
 
-Streaming is powered by `stream_structured(feature, schema, prompt, temperature, max_tokens)` in `backend/app/services/ai/llm.py`, which wraps `structured_llm.astream(prompt)`. Mid-stream provider fallback is not supported — once a stream begins it is committed to its provider.
+LLM streaming is powered by `stream_structured(feature, schema, prompt, temperature, max_tokens)` in `backend/app/services/ai/llm.py`, which wraps `structured_llm.astream(prompt)`. Mid-stream provider fallback is not supported — once a stream begins it is committed to its provider. The transport stream does not use `stream_structured`; it iterates `asyncio.as_completed` over per-pair API fan-outs.
 
 ## Caching (two layers, unchanged)
 
@@ -119,7 +102,6 @@ On autocomplete dropdown hover (`onMouseEnter` with 150ms dwell), the frontend p
 |---------------|-------------|-------------------|
 | enrich        | 0.0         | 1024              |
 | suggestions   | 0.5         | 2048              |
-| transport     | 0.3         | 1024              |
 
 ## Transport pair semantics
 
@@ -146,5 +128,5 @@ Backend excludes covered pairs on subsequent fetches.
 When reading `plans.transport_suggestions`:
 - Drop cached pairs whose source/dest item_id is now a transport item.
 - Drop cached pairs not present in the recomputed expected set.
-- Generate LLM responses only for the new pairs.
+- Resolve only the new pairs through `services/transport/cross_city.py` (OSRM driving + Transitous train/bus/ferry + flight estimator, fanned out in parallel per pair). Each option carries `mode`, `duration_seconds`, `distance_meters`, `is_estimate`, `transit_summary?`, and `geometry?` — no LLM `TransportOption` fields like `one_line` or `price_hint`.
 - Write back the merged result.

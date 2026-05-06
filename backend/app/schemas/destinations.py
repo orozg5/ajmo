@@ -14,6 +14,13 @@ class DestinationCreate(BaseModel):
     day_numbers: list[int] = []
 
 
+class DestinationUpdate(BaseModel):
+    country: str | None = None
+    city: str | None = None
+    sort_order: int | None = None
+    day_numbers: list[int] | None = None
+
+
 # ── Response models ────────────────────────────────────────────────────────────
 
 
