@@ -15,6 +15,7 @@ import {
 // MessagesSquare = group chat — fits the plan-wide "Chat" surface better
 // than MessageCircle (which we use for per-item comments on ItemCard).
 import { toast } from "sonner";
+import type { HocuspocusProvider } from "@hocuspocus/provider";
 import type * as Y from "yjs";
 
 import { Button } from "@/components/ui/button";
@@ -26,9 +27,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { type DestinationResponse, type Plan, type PlanRole, updatePlan } from "@/lib/api";
+import { useOnlineStatus } from "@/lib/offline/useOnlineStatus";
 import { setPlanMeta } from "@/lib/yjs/mutations";
 import { type PlanMetaPatch } from "@/lib/yjs/schema";
 import EditPlanDialog from "@/features/plans/components/itinerary/EditPlanDialog";
+import ConnectionStatusBadge from "@/features/plans/components/offline/ConnectionStatusBadge";
 import ActivitySheet from "@/features/social/components/ActivitySheet";
 import CommentsSheet from "@/features/social/components/CommentsSheet";
 import ShareDialog from "@/features/social/components/ShareDialog";
@@ -41,6 +44,7 @@ type PlanHeaderProps = {
   isOwner: boolean;
   role: PlanRole;
   doc: Y.Doc | null;
+  provider: HocuspocusProvider | null;
   liveMeta: PlanMetaPatch;
 };
 
@@ -60,7 +64,15 @@ function formatDateRange(from: string | null, to: string | null): string | null 
   return only ? only.toLocaleDateString("en-US", yearOptions) : null;
 }
 
-export default function PlanHeader({ plan, destinations, isOwner, role, doc, liveMeta }: PlanHeaderProps) {
+export default function PlanHeader({
+  plan,
+  destinations,
+  isOwner,
+  role,
+  doc,
+  provider,
+  liveMeta,
+}: PlanHeaderProps) {
   const reducedMotion = useReducedMotion();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -71,6 +83,8 @@ export default function PlanHeader({ plan, destinations, isOwner, role, doc, liv
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const canEdit = role === "owner" || role === "editor";
+  const { online } = useOnlineStatus();
+  const canEditMeta = canEdit && online;
 
   useEffect(() => {
     setLocalTitle(plan.title);
@@ -119,7 +133,12 @@ export default function PlanHeader({ plan, destinations, isOwner, role, doc, liv
   }
 
   function startEdit() {
-    if (!canEdit) return;
+    if (!canEditMeta) {
+      if (canEdit && !online) {
+        toast.warning("You need to be online to rename the trip.");
+      }
+      return;
+    }
     setIsEditing(true);
     setDraftTitle(localTitle);
     requestAnimationFrame(() => inputRef.current?.select());
@@ -202,10 +221,16 @@ export default function PlanHeader({ plan, destinations, isOwner, role, doc, liv
               <h1
                 className={cn(
                   "text-display-xl leading-tight",
-                  canEdit && "cursor-text hover:text-primary/90",
+                  canEditMeta && "cursor-text hover:text-primary/90",
                 )}
                 onClick={startEdit}
-                title={canEdit ? "Click to rename" : undefined}
+                title={
+                  canEditMeta
+                    ? "Click to rename"
+                    : canEdit && !online
+                      ? "Connect to the internet to rename the trip"
+                      : undefined
+                }
               >
                 {localTitle}
               </h1>
@@ -220,7 +245,10 @@ export default function PlanHeader({ plan, destinations, isOwner, role, doc, liv
             ) : null}
           </div>
 
-          <PresenceStrip />
+          <div className="flex flex-col items-end gap-2">
+            <ConnectionStatusBadge provider={provider} />
+            <PresenceStrip />
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-ink-subtle">

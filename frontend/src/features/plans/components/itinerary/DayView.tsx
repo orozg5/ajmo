@@ -3,9 +3,11 @@
 import { useState } from "react";
 
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { RefreshCw, TrainFront } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { type AddItemPayload, type DestinationResponse, type EnrichedItem, type PlanDay, type PlanItem } from "@/lib/api";
+import { useOnlineStatus } from "@/lib/offline/useOnlineStatus";
 import { sortItems } from "@/features/plans/utils/sortKeys";
 import AddNoteInline from "@/features/plans/components/itinerary/AddNoteInline";
 import InlineTransportBar from "@/features/plans/components/transport/InlineTransportBar";
@@ -42,9 +44,24 @@ interface Props {
   dayTransport?: DayTransportContext;
   highlightedItemId?: string | null;
   onItemHoverChange?: (itemId: string, hovered: boolean) => void;
+  /** Open the cross-city transport panel so the user can refresh suggestions
+   * after a reorder purged the previous transport item. Pass `null` when the
+   * plan only has one destination — there's nothing to bridge. */
+  onRefreshCrossCityTransport?: (() => void) | null;
 }
 
-export default function DayView({ day, destinations, onAddItem, onRemoveItem, onUpdateItemNotes, dayTransport, highlightedItemId, onItemHoverChange }: Props) {
+export default function DayView({
+  day,
+  destinations,
+  onAddItem,
+  onRemoveItem,
+  onUpdateItemNotes,
+  dayTransport,
+  highlightedItemId,
+  onItemHoverChange,
+  onRefreshCrossCityTransport,
+}: Props) {
+  const { online } = useOnlineStatus();
   const [pendingItem, setPendingItem] = useState<PendingItem | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [searchKey, setSearchKey] = useState(0);
@@ -87,6 +104,28 @@ export default function DayView({ day, destinations, onAddItem, onRemoveItem, on
 
   const allSortedItems = sortItems(day.items);
 
+  // The day spans multiple destinations when it carries items from more than
+  // one city. After a reorder that swapped cross-city days, the cascade in
+  // `mutations.reorderItems` purges the now-stale transport — the banner
+  // surfaces "you might want a new suggestion" at exactly that moment, but
+  // also helps first-time setup of a transit day.
+  const distinctDestinationCount = new Set(
+    allSortedItems
+      .map((item) => item.destination_id)
+      .filter((id): id is string => Boolean(id)),
+  ).size;
+  const hasCrossCityTransportItem = allSortedItems.some(
+    (item) =>
+      item.item_type === "transport" &&
+      item.ai_data != null &&
+      typeof item.ai_data === "object" &&
+      "cross_city_pair" in item.ai_data,
+  );
+  const showTransportRefreshBanner =
+    distinctDestinationCount > 1 &&
+    !hasCrossCityTransportItem &&
+    Boolean(onRefreshCrossCityTransport);
+
   const slots: RenderSlot[] = [];
 
   for (const dest of destinations) {
@@ -113,6 +152,26 @@ export default function DayView({ day, destinations, onAddItem, onRemoveItem, on
   return (
     <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
       <div className="space-y-3">
+        {showTransportRefreshBanner ? (
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2.5 text-sm">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/20 text-amber-700">
+              <TrainFront className="size-4" strokeWidth={1.75} />
+            </span>
+            <span className="flex-1 text-ink">
+              This day spans multiple destinations and has no cross-city transport. Refresh suggestions to add a hop.
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onRefreshCrossCityTransport?.()}
+              disabled={!online}
+              title={!online ? "Connect to the internet to refresh transport" : undefined}
+            >
+              <RefreshCw className="size-3.5" strokeWidth={1.75} />
+              Refresh
+            </Button>
+          </div>
+        ) : null}
         {destinations.length === 0 ? (
           <p className="text-sm text-ink-subtle">Set a destination on this plan to add enriched items.</p>
         ) : (

@@ -20,6 +20,7 @@ src/
 ├── features/                     Feature-scoped components and hooks
 │   ├── auth/components/          LoginForm (forwards ?next), RegisterForm, LogoutButton
 │   ├── plans/components/         Itinerary UI — incl. PlanWorkspace (role-aware Yjs shell)
+│   ├── plans/components/offline/ ConnectionStatusBadge + useConnectionToasts (online↔offline UI)
 │   ├── plans/hooks/              Itinerary data hooks; itinerary + notes route through Y.Doc
 │   ├── map/                      MapLibre components (Phase 4)
 │   ├── social/                   Friends + invites + plan-members UI (Phase 5; comments/reactions/ratings deferred)
@@ -32,7 +33,7 @@ src/
 │   ├── supabase/                 client.ts (browser) + server.ts (SSR) + profile.ts (RLS-scoped profile chrome fetch)
 │   ├── yjs/                      Doc factory, Hocuspocus provider, mutations, React observer hooks (Phase 6)
 │   ├── map/                      MapLibre init, style, marker helpers (Phase 4)
-│   ├── offline/                  Service worker bootstrap, write queue, query persister (Phase 7)
+│   ├── offline/                  useOnlineStatus, useSyncState, React Query IndexedDB persister, per-plan persistence cleanup
 │   └── utils.ts                  cn(), isAbortError()
 └── stores/                       Zustand stores — UI state only
 ```
@@ -41,7 +42,7 @@ src/
 
 - **Yjs** (via `lib/yjs/`) — collaborative itinerary state while a plan is open (shipped Phase 6, 2026-05-06). Y.Doc holds `items` (per-day `Y.Array<Y.Map>`), `day_notes` (`Y.Map<dayId, string>`), plus the social surfaces added 2026-05-06: `likes` (`Y.Map<itemId, Y.Map<userId, true>>`), `ratings` (`Y.Map<itemId, Y.Map<userId, number>>`), `comments` (`Y.Array<Y.Map>`). Awareness/presence (`focusedItemId`, `isTypingComment`, user profile chrome) rides on the Hocuspocus provider's `awareness` channel — see `lib/yjs/hooks.ts:useRemoteAwareness`, `features/plans/components/awareness/`, `docs/COLLAB.md`, and ADR 2026-05-06 (revised).
 - **Zustand** (`stores/`) — UI-only client state: theme, offline pill, queued-writes badge, toast store, modal open/close.
-- **React Query** (`@tanstack/react-query`) — server cache. Persists to IndexedDB for the queries tagged `{ persist: true }`.
+- **React Query** (`@tanstack/react-query`) — server cache. Queries tagged `meta: { persist: true }` are persisted to IndexedDB via `@tanstack/query-async-storage-persister` on top of `idb-keyval` (key `ajmo:react-query-cache`, 24h `maxAge`); persistence is wired in `app/providers.tsx` and hydrates on client mount so the plan workspace paints from the last snapshot when offline. See `lib/offline/queryPersister.ts`.
 - **React Hook Form + Zod** — form state; schemas colocated with the form.
 
 ## Auth pattern
@@ -94,3 +95,7 @@ src/
 - Don't reach for `lib/api/social.ts` for likes/ratings/comments — those REST endpoints exist only as the materializer's reconciliation target. Frontend reads/writes go through Yjs.
 - Never persist raw query responses that contain an access token.
 - Never use the Next.js `pages/` router.
+- The Y.Doc + `IndexeddbPersistence` are tied to `planId`; the Hocuspocus provider is tied to the auth token. Losing the token (e.g. Supabase can't refresh while offline) must NOT tear down the doc — see `lib/yjs/provider.ts` (`createPlanDoc` / `createPlanProvider`) and `lib/yjs/hooks.ts:useYDoc`.
+- Always `await localLoaded` (from `createPlanDoc`) before constructing a `HocuspocusProvider` on the same doc. Without the gate, the sync handshake races IndexedDB hydration and offline edits get dropped.
+- On logout call `destroyAllPlanPersistence()` from `lib/offline/cleanup.ts` (already wired in `LogoutButton`); on a 403/404 from `/internal/collab/authorize` call `destroyPlanPersistence(planId)` so stale offline edits don't outlive plan access.
+- Disable server-only actions (rename trip, delete plan, refresh cross-city transport) when `useOnlineStatus().online === false`. Surface live sync state via `<ConnectionStatusBadge provider={…} />` in `PlanHeader`; mount `useConnectionToasts()` once near the plan workspace root to fire debounced online↔offline toasts (5 s flap window).

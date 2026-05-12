@@ -33,6 +33,8 @@ export function useHotels(planId: string): UseHotelsReturn {
     queryKey,
     queryFn: () => apiListHotels(planId),
     staleTime: 5_000,
+    // Persist so the workspace can render hotels offline from the cache.
+    meta: { persist: true },
   });
 
   const createMutation = useMutation({

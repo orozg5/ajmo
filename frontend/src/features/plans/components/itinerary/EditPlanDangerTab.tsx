@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { deletePlan } from "@/lib/api";
+import { useOnlineStatus } from "@/lib/offline/useOnlineStatus";
 
 type EditPlanDangerTabProps = {
   planId: string;
@@ -18,6 +19,7 @@ export default function EditPlanDangerTab({ planId, planTitle }: EditPlanDangerT
   const router = useRouter();
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
+  const { online } = useOnlineStatus();
 
   const deleteMutation = useMutation({
     mutationFn: () => deletePlan(planId),
@@ -63,7 +65,7 @@ export default function EditPlanDangerTab({ planId, planTitle }: EditPlanDangerT
               variant="destructive"
               size="sm"
               onClick={handleConfirm}
-              disabled={deleteMutation.isPending}
+              disabled={deleteMutation.isPending || !online}
             >
               {deleteMutation.isPending ? (
                 <>
@@ -75,15 +77,21 @@ export default function EditPlanDangerTab({ planId, planTitle }: EditPlanDangerT
             </Button>
           </div>
         ) : (
-          <div className="mt-4">
+          <div className="mt-4 space-y-2">
             <Button
               variant="destructive"
               size="sm"
               onClick={() => setConfirming(true)}
+              disabled={!online}
             >
               <Trash2 className="size-4" strokeWidth={1.5} />
               Delete trip
             </Button>
+            {!online && (
+              <p className="text-xs text-ink-subtle">
+                You need to be online to delete a trip.
+              </p>
+            )}
           </div>
         )}
       </div>

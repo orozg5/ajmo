@@ -21,7 +21,7 @@ collab/
 
 - Accept `ws://…?token=<jwt>&planId=<uuid>` connections.
 - Call FastAPI `POST /internal/collab/authorize` with the `X-Collab-Secret` header to resolve `{ok, role, userId, planId}` — done in `onAuthenticate`.
-- Persist binary Yjs state to `plans.yjs_state` via `@hocuspocus/extension-database` (raw `pg` for direct BYTEA round-trips, not Supabase REST).
+- Persist binary Yjs state to `plans.yjs_state` via `@hocuspocus/extension-database` (raw `pg` for direct BYTEA round-trips, not Supabase REST). Clients additionally mirror the same Y.Doc to a per-plan IndexedDB store via `y-indexeddb` (`ajmo:plan:<planId>`); because both sides hold an identical Y.Doc, reconnect uses Hocuspocus's standard state-vector exchange — no special server-side code is required for offline merge.
 - POST `/internal/collab/changed` (fire-and-forget, shared-secret-guarded) to FastAPI on `onChange` — triggers the relational materializer.
 - Seed cold rooms by calling `GET /internal/collab/seed?plan_id=…` when the `Database` extension's fetch returns `null`.
 - Block writes from `role = viewer` connections by returning `{ user, readOnly: true }` from `onAuthenticate` (Hocuspocus drops sync updates server-side based on the connection's `readOnly` flag — `beforeHandleMessage` is not used).

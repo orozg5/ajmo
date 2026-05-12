@@ -24,6 +24,7 @@ import { type UsePlanItineraryReturn } from "@/features/plans/hooks/usePlanItine
 import { useSameDayTransportInsert } from "@/features/plans/hooks/useSameDayTransportInsert";
 import { useCrossCityTransport } from "@/features/plans/hooks/useCrossCityTransport";
 import { useHotels } from "@/features/plans/hooks/useHotels";
+import { useOnlineStatus } from "@/lib/offline/useOnlineStatus";
 import PlanMap from "@/features/map/PlanMap";
 import { dragEndToReorderEntry } from "@/features/plans/utils/dragEndToReorderEntry";
 import CrossCityTransportPanel from "@/features/plans/components/transport/CrossCityTransportPanel";
@@ -67,6 +68,11 @@ export default function ItineraryPlanner({ plan, destinations, role, itinerary }
   const sameDayTransport = useSameDayTransportInsert({ addItem, doc });
   const crossCityTransportHook = useCrossCityTransport({ planId: plan.id });
   const hotels = useHotels(plan.id);
+  const { online } = useOnlineStatus();
+  const crossCityDisabled = crossCityTransportHook.isLoading || !online;
+  const crossCityDisabledReason = !online
+    ? "Connect to the internet to refresh transport"
+    : null;
 
   // Viewers get an unreachable activation distance so drag-drop never fires.
   // Server-side Yjs `readOnly` is the canonical enforcement; this is just UI.
@@ -244,6 +250,9 @@ export default function ItineraryPlanner({ plan, destinations, role, itinerary }
                   }}
                   highlightedItemId={highlightedItemId}
                   onItemHoverChange={handleItemHoverChange}
+                  onRefreshCrossCityTransport={
+                    destinations.length > 1 ? handleOpenCrossCity : null
+                  }
                 />
               </div>
             )}
@@ -253,7 +262,8 @@ export default function ItineraryPlanner({ plan, destinations, role, itinerary }
                 <button
                   type="button"
                   onClick={handleOpenCrossCity}
-                  disabled={crossCityTransportHook.isLoading}
+                  disabled={crossCityDisabled}
+                  title={crossCityDisabledReason ?? undefined}
                   className="flex cursor-pointer items-center gap-3 rounded-xl border border-primary/40 bg-primary/10 p-3 text-left transition-colors hover:border-primary/60 hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary">
@@ -261,7 +271,9 @@ export default function ItineraryPlanner({ plan, destinations, role, itinerary }
                   </span>
                   <span className="flex flex-col">
                     <span className="text-sm font-semibold text-ink">Cross-city transport</span>
-                    <span className="text-xs text-ink-subtle">Plan how you'll get between cities</span>
+                    <span className="text-xs text-ink-subtle">
+                      {crossCityDisabledReason ?? "Plan how you'll get between cities"}
+                    </span>
                   </span>
                 </button>
               )}
@@ -312,7 +324,8 @@ export default function ItineraryPlanner({ plan, destinations, role, itinerary }
               <button
                 type="button"
                 onClick={handleOpenCrossCity}
-                disabled={crossCityTransportHook.isLoading}
+                disabled={crossCityDisabled}
+                title={crossCityDisabledReason ?? undefined}
                 className="flex items-center gap-3 rounded-xl border border-primary/40 bg-primary/10 p-3 text-left transition-colors hover:border-primary/60 hover:bg-primary/15 disabled:opacity-60"
               >
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary">
@@ -320,7 +333,9 @@ export default function ItineraryPlanner({ plan, destinations, role, itinerary }
                 </span>
                 <span className="flex flex-col">
                   <span className="text-sm font-semibold text-ink">Cross-city transport</span>
-                  <span className="text-xs text-ink-subtle">Plan how you'll get between cities</span>
+                  <span className="text-xs text-ink-subtle">
+                    {crossCityDisabledReason ?? "Plan how you'll get between cities"}
+                  </span>
                 </span>
               </button>
             )}

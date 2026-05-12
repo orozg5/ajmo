@@ -12,7 +12,7 @@ from __future__ import annotations
 import base64
 import logging
 
-from pycrdt import Array, Doc, Map
+from pycrdt import Array, Doc, Map, Text
 
 from app.db import get_supabase_client
 from app.services.collab.schema import (
@@ -107,11 +107,21 @@ async def build_seed_update(plan_id: str) -> bytes:
         arr = Array()
         items_root[day_id] = arr
         for row in item_rows:
-            arr.append(Map(project_row(row, ITEM_FIELDS)))
+            # Project the static fields, then replace `notes` with a Y.Text
+            # (Phase 7f). Null/empty notes still seed as null so the read-side
+            # null-vs-empty distinction is preserved.
+            item_payload = project_row(row, ITEM_FIELDS)
+            notes_value = item_payload.get("notes")
+            item_payload["notes"] = (
+                Text(notes_value) if isinstance(notes_value, str) and notes_value else None
+            )
+            arr.append(Map(item_payload))
 
     notes_root = doc.get(ROOT_DAY_NOTES, type=Map)
     for day_id, notes in day_notes.items():
-        notes_root[day_id] = notes
+        # day_notes values are Y.Text (Phase 7f). Empty strings are skipped
+        # earlier by the comprehension; this only handles non-empty notes.
+        notes_root[day_id] = Text(notes)
 
     likes_root = doc.get(ROOT_LIKES, type=Map)
     for item_id, user_ids in likes_by_item.items():

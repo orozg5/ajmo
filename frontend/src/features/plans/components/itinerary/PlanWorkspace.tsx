@@ -14,6 +14,7 @@ import { PlanCollabProvider } from "@/features/plans/hooks/PlanCollabContext";
 import { useYPlanMeta } from "@/lib/yjs/hooks";
 import AwarenessPublisher from "@/features/plans/components/awareness/AwarenessPublisher";
 import ItineraryPlanner from "@/features/plans/components/itinerary/ItineraryPlanner";
+import { useConnectionToasts } from "@/features/plans/components/offline/useConnectionToasts";
 import PlanHeader from "@/features/plans/components/itinerary/PlanHeader";
 
 interface Props {
@@ -34,6 +35,7 @@ export default function PlanWorkspace({
   const itinerary = usePlanItinerary({ planId: plan.id, initialDays, role });
   const liveMeta = useYPlanMeta(itinerary.doc);
   const queryClient = useQueryClient();
+  useConnectionToasts();
 
   // Date changes ripple through plan_days via the backend's sync_days call.
   // When a peer broadcasts new dates, refetch the days list so day cards
@@ -59,6 +61,7 @@ export default function PlanWorkspace({
         isOwner={isOwner}
         role={role}
         doc={itinerary.doc}
+        provider={itinerary.provider}
         liveMeta={liveMeta}
       />
       <ItineraryPlanner

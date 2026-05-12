@@ -28,6 +28,7 @@ import {
   updateDestination,
   updatePlan,
 } from "@/lib/api";
+import { useOnlineStatus } from "@/lib/offline/useOnlineStatus";
 import { setPlanMeta } from "@/lib/yjs/mutations";
 import { type PlanMetaField, type PlanMetaPatch, PLAN_META_FIELDS } from "@/lib/yjs/schema";
 import EditPlanDangerTab from "@/features/plans/components/itinerary/EditPlanDangerTab";
@@ -79,6 +80,7 @@ export default function EditPlanDialog({
   const isOwner = role === "owner";
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { online } = useOnlineStatus();
 
   const [tab, setTab] = useState<string>("general");
 
@@ -262,10 +264,15 @@ export default function EditPlanDialog({
         </Tabs>
 
         {showSaveButton && (
-          <DialogFooter>
+          <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end">
+            {!online && (
+              <p className="text-xs text-ink-subtle sm:mr-auto">
+                You need to be online to change plan settings.
+              </p>
+            )}
             <Button
               onClick={handleSave}
-              disabled={saveMutation.isPending || coverUpload.isUploading}
+              disabled={saveMutation.isPending || coverUpload.isUploading || !online}
             >
               {saveMutation.isPending ? (
                 <>

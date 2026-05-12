@@ -53,9 +53,50 @@ function findItem(
 function buildItemMap(payload: Partial<PlanItem> & { id: string }): Y.Map<unknown> {
   const map = new Y.Map<unknown>();
   for (const field of ITEM_FIELDS) {
+    if (field === "notes") continue;
     map.set(field, (payload as Record<string, unknown>)[field] ?? null);
   }
+  // The notes field is stored as a Y.Text so concurrent edits can merge
+  // character-by-character instead of last-writer-wins. See ADR 2026-05-09
+  // (Phase 7f). null means "no notes"; non-null gets a fresh Y.Text seeded
+  // with the initial content.
+  const notes = payload.notes ?? null;
+  if (notes === null) {
+    map.set("notes", null);
+  } else {
+    map.set("notes", new Y.Text(notes));
+  }
   return map;
+}
+
+/** Apply the minimum delete + insert needed to turn `yText` into `newText`.
+ * Concurrent users typing at different positions can both have their inserts
+ * land — only a literally-overlapping span picks a deterministic ordering.
+ *
+ * Common-prefix / common-suffix is the simplest correct diff for the
+ * single-textarea typing pattern that's our entire offline use case here.
+ * Larger structural edits (paste a paragraph in the middle) still produce
+ * one delete + one insert at the right span, which is much better than
+ * blast-and-replace and good enough until someone wants a CodeMirror /
+ * ProseMirror binding. */
+function applyTextDiff(yText: Y.Text, newText: string): void {
+  const oldText = yText.toString();
+  if (oldText === newText) return;
+  let prefix = 0;
+  const minLen = Math.min(oldText.length, newText.length);
+  while (prefix < minLen && oldText[prefix] === newText[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < oldText.length - prefix &&
+    suffix < newText.length - prefix &&
+    oldText[oldText.length - 1 - suffix] === newText[newText.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  const deleteLen = oldText.length - prefix - suffix;
+  const insertText = newText.substring(prefix, newText.length - suffix);
+  if (deleteLen > 0) yText.delete(prefix, deleteLen);
+  if (insertText.length > 0) yText.insert(prefix, insertText);
 }
 
 function lastSortKey(arr: Y.Array<Y.Map<unknown>>): string | null {
@@ -160,13 +201,26 @@ export function updateItemNotes(doc: Y.Doc, itemId: string, notes: string | null
   doc.transact(() => {
     const found = findItem(doc, itemId);
     if (!found) return;
-    found.map.set("notes", notes);
+    const existing = found.map.get("notes");
+    if (notes === null) {
+      // Clearing notes — drop any existing Y.Text and store null.
+      found.map.set("notes", null);
+      return;
+    }
+    if (existing instanceof Y.Text) {
+      applyTextDiff(existing, notes);
+    } else {
+      // First write (or legacy plain-string entry) — install a fresh Y.Text
+      // seeded with the new content. Subsequent edits will diff against it.
+      found.map.set("notes", new Y.Text(notes));
+    }
   });
 }
 
 export function reorderItems(doc: Y.Doc, entries: ReorderEntry[]): void {
   doc.transact(() => {
     const root = getItemsRoot(doc);
+    const touchedDayIds = new Set<string>();
     for (const entry of entries) {
       const found = findItem(doc, entry.id);
       if (!found) continue;
@@ -174,20 +228,73 @@ export function reorderItems(doc: Y.Doc, entries: ReorderEntry[]): void {
       if (!fromArr) continue;
 
       // Snapshot fields, drop the old node, then insert a fresh node with
-      // updated day_id/sort_key in the destination array.
+      // updated day_id/sort_key in the destination array. The notes field
+      // gets flattened to a string and re-wrapped in a new Y.Text on the
+      // replacement — a Yjs CRDT type can't be moved between parents, and
+      // reorder-during-concurrent-notes-edit is rare enough that losing the
+      // few-second CRDT history is acceptable.
       const snapshot: Record<string, unknown> = {};
-      for (const field of ITEM_FIELDS) snapshot[field] = found.map.get(field) ?? null;
+      for (const field of ITEM_FIELDS) {
+        if (field === "notes") continue;
+        snapshot[field] = found.map.get(field) ?? null;
+      }
+      const existingNotes = found.map.get("notes");
+      const notesString =
+        existingNotes instanceof Y.Text
+          ? existingNotes.toString()
+          : typeof existingNotes === "string"
+            ? existingNotes
+            : null;
       snapshot.day_id = entry.day_id;
       snapshot.sort_key = entry.sort_key;
       snapshot.destination_id = entry.destination_id ?? snapshot.destination_id ?? null;
+
+      touchedDayIds.add(found.dayId);
+      touchedDayIds.add(entry.day_id);
 
       fromArr.delete(found.index, 1);
       const toArr = getDayArray(doc, entry.day_id);
       const replacement = new Y.Map<unknown>();
       for (const [key, value] of Object.entries(snapshot)) replacement.set(key, value);
+      replacement.set("notes", notesString === null ? null : new Y.Text(notesString));
       toArr.push([replacement]);
     }
+    purgeStaleCrossCityTransport(doc, touchedDayIds);
   });
+}
+
+/** Drop every cross-city transport item that lives in one of the touched
+ * days. A reorder may have changed which destinations sit on either side of
+ * the transport, so the original pair (Paris→Berlin) may now describe the
+ * wrong direction (Berlin→Paris). Deleting forces the user to re-fetch
+ * suggestions on the "Transport needs refresh" banner — the alternative
+ * (silently keeping wrong-direction transport) was the existing online bug
+ * the offline-support work also fixes.
+ *
+ * Custom transport items (user-typed, no `ai_data.cross_city_pair`) are
+ * direction-agnostic and left alone — they're "I'll take the train" notes,
+ * not LLM-generated routing. */
+function purgeStaleCrossCityTransport(doc: Y.Doc, dayIds: Set<string>): void {
+  const root = getItemsRoot(doc);
+  for (const dayId of dayIds) {
+    const arr = root.get(dayId);
+    if (!arr) continue;
+    // Walk back-to-front so deletions don't shift the indices we're iterating.
+    for (let index = arr.length - 1; index >= 0; index -= 1) {
+      const map = arr.get(index);
+      if (!map) continue;
+      if (map.get("item_type") !== "transport") continue;
+      const aiData = map.get("ai_data");
+      if (
+        !aiData ||
+        typeof aiData !== "object" ||
+        !("cross_city_pair" in (aiData as Record<string, unknown>))
+      ) {
+        continue;
+      }
+      arr.delete(index, 1);
+    }
+  }
 }
 
 export function setDayNotes(doc: Y.Doc, dayId: string, notes: string | null): void {
@@ -195,9 +302,19 @@ export function setDayNotes(doc: Y.Doc, dayId: string, notes: string | null): vo
   // loses the entry, and the days-merging fallback in usePlanItinerary picks
   // up the stale REST value (last materialized) — visually snapping the
   // textarea back to the previous content as soon as the user clears it.
+  //
+  // Stored as Y.Text so concurrent edits merge character-by-character. The
+  // null-or-empty-string distinction collapses to "" — the read hook always
+  // returns a string for the dayId once we've ever written it.
+  const newText = notes ?? "";
   doc.transact(() => {
     const root = doc.getMap(ROOT_DAY_NOTES);
-    root.set(dayId, notes ?? "");
+    const existing = root.get(dayId);
+    if (existing instanceof Y.Text) {
+      applyTextDiff(existing, newText);
+    } else {
+      root.set(dayId, new Y.Text(newText));
+    }
   });
 }
 

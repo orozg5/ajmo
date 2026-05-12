@@ -14,11 +14,19 @@
 //
 // root (Y.Doc)
 // ├── items:     Y.Map<Y.Array<Y.Map>>      day_id → ordered items
-// ├── day_notes: Y.Map<string>              day_id → notes text
+// │                                         each item map's `notes` field is a Y.Text (see Phase 7f)
+// ├── day_notes: Y.Map<Y.Text>              day_id → free-text notes for the day
 // ├── plan_meta: Y.Map<string|null>         broadcast mirror of editable plan fields
 // ├── likes:     Y.Map<Y.Map<true>>         item_id → user_id → present-iff-liked
 // ├── ratings:   Y.Map<Y.Map<number>>       item_id → user_id → 1..5
 // └── comments:  Y.Array<Y.Map>             flat list of comment rows; thread by parent_id
+//
+// `day_notes` and item-level `notes` used to be plain strings (`Y.Map.set("notes", str)`).
+// As of Phase 7f they're `Y.Text` so that two collaborators editing the same note from
+// different network sides both have their typing land instead of one silently winning by
+// Lamport clock. Read paths (frontend hooks, backend materializer/seed) tolerate both
+// shapes during the rollout window — legacy plans whose yjs_state predates the migration
+// still work, and the first write upgrades the slot to a Y.Text.
 
 export const ROOT_ITEMS = "items";
 export const ROOT_DAY_NOTES = "day_notes";

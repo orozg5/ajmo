@@ -55,6 +55,11 @@ export interface UsePlanItineraryReturn {
   /** The Hocuspocus provider — exposed so the awareness layer can publish
    * presence + typing state. Null until the websocket session is up. */
   provider: HocuspocusProvider | null;
+  /** Has the IndexedDB-backed Y.Doc state finished hydrating into the
+   * in-memory CRDT. Components that want to fall back to the cached doc
+   * when offline (no Hocuspocus sync) gate on this in addition to
+   * `connectionStatus`. */
+  localLoaded: boolean;
 }
 
 type DaysCache = PlanDay[];
@@ -111,7 +116,7 @@ export function usePlanItinerary({
     };
   }, [planId]);
 
-  const { doc, provider, status: connectionStatus, isSynced } = useYDoc({
+  const { doc, provider, status: connectionStatus, isSynced, localLoaded } = useYDoc({
     planId,
     token,
     initialRole: role,
@@ -122,6 +127,9 @@ export function usePlanItinerary({
     queryFn: () => apiGetDays(planId),
     initialData: initialDays,
     staleTime: 5_000,
+    // Persist so a cold offline open of the plan can render the day skeleton
+    // (id, day_number, date, title) before Yjs hydrates from IndexedDB.
+    meta: { persist: true },
   });
 
   const restDays = useMemo(() => daysQuery.data ?? [], [daysQuery.data]);
@@ -129,9 +137,19 @@ export function usePlanItinerary({
   const allNotes = useYAllDayNotes(doc);
 
   const days: PlanDay[] = useMemo(() => {
-    if (!doc || !isSynced) return restDays;
-    // Once Yjs has synced, items + day-notes come from the doc; the rest of
-    // each day (id, day_number, date, title) stays REST-driven.
+    // Use Yjs as soon as the doc has *any* trustworthy state: either the
+    // websocket has confirmed first sync (`isSynced`) OR IndexedDB has
+    // hydrated cached local state (`localLoaded`). Before either, fall back
+    // to the REST snapshot so the SSR-rendered view survives the first paint.
+    //
+    // Gating on `isSynced` alone hid the user's offline edits — when the
+    // websocket couldn't connect, `isSynced` stayed false, and the UI showed
+    // restDays even though the offline edits were sitting in the Y.Doc and
+    // IndexedDB. The reconnect then "revealed" the merged Yjs state all at
+    // once, which looked like the online user had won.
+    if (!doc || (!isSynced && !localLoaded)) return restDays;
+    // Items + day-notes come from the doc; the rest of each day (id,
+    // day_number, date, title) stays REST-driven.
     return restDays.map((day) => {
       // `in` distinguishes "Yjs explicitly set notes (possibly to '')" from
       // "Yjs has never seen this day" — the latter falls back to REST so
@@ -145,7 +163,7 @@ export function usePlanItinerary({
         notes: yNotes !== null ? yNotes : day.notes ?? null,
       };
     });
-  }, [doc, isSynced, restDays, allItems, allNotes, planId]);
+  }, [doc, isSynced, localLoaded, restDays, allItems, allNotes, planId]);
 
   const removeDayMutation = useMutation({
     mutationFn: (dayId: string) => apiRemoveDay(planId, dayId),
@@ -241,5 +259,6 @@ export function usePlanItinerary({
     connectionStatus,
     doc,
     provider,
+    localLoaded,
   };
 }

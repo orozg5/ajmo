@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from pycrdt import Array, Doc, Map
+from pycrdt import Array, Doc, Map, Text
 
 from app.config import settings
 from app.db import get_supabase_client
@@ -35,6 +35,14 @@ from app.services.collab.schema import (
     ROOT_LIKES,
     ROOT_RATINGS,
 )
+
+# Subset of ITEM_FIELDS whose Postgres column is `integer`. Yjs has no
+# integer/float distinction (JS numbers are all f64); pycrdt decodes any
+# value Yjs encoded as f64 to a Python float, and `json.dumps(0.0)` is
+# `"0.0"` which PG refuses for an integer column. Coerce at this seam so
+# the relational schema's types are honoured regardless of how the value
+# travelled through the CRDT.
+INTEGER_ITEM_FIELDS = ("duration_minutes", "sort_order")
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +121,37 @@ def map_to_dict(value: Map) -> dict:
     return {key: value[key] for key in value.keys()}
 
 
+def coerce_integer_fields(row: dict) -> None:
+    """Round-trip every INTEGER_ITEM_FIELDS slot through `int()` so a Python
+    float decoded from a Yjs f64 encoding becomes a plain integer before we
+    ship the row to Supabase. None passes through unchanged; anything that
+    fails to coerce (string, dict, etc.) is dropped to None rather than left
+    as a value that would also fail PG's integer parser."""
+    for field in INTEGER_ITEM_FIELDS:
+        value = row.get(field)
+        if value is None:
+            continue
+        try:
+            row[field] = int(value)
+        except (TypeError, ValueError):
+            row[field] = None
+
+
+def text_or_string_to_str(value: object) -> str | None:
+    """Notes fields are Y.Text after Phase 7f, but legacy plans whose
+    yjs_state predates the migration may still hold plain strings. Accept
+    both shapes and return a plain Python str (or None for empty)."""
+    if value is None:
+        return None
+    if isinstance(value, Text):
+        return str(value)
+    if isinstance(value, str):
+        return value
+    # Anything else (number, bool, dict) was never a valid notes shape;
+    # ignore and treat as cleared.
+    return None
+
+
 def read_items(doc: Doc, plan_id: str) -> list[dict]:
     items_root = doc.get(ROOT_ITEMS, type=Map)
     rows: list[dict] = []
@@ -125,6 +164,10 @@ def read_items(doc: Doc, plan_id: str) -> list[dict]:
                 continue
             snapshot = map_to_dict(entry)
             row = {field: snapshot.get(field) for field in ITEM_FIELDS}
+            # `notes` is a Y.Text in the post-7f schema; flatten to a plain
+            # string before writing to the relational `notes text` column.
+            row["notes"] = text_or_string_to_str(row.get("notes"))
+            coerce_integer_fields(row)
             row["plan_id"] = plan_id
             row["day_id"] = day_id
             rows.append(row)
@@ -135,15 +178,18 @@ def read_day_notes(doc: Doc) -> dict[str, str]:
     raw = doc.get(ROOT_DAY_NOTES, type=Map)
     out: dict[str, str] = {}
     for day_id in raw.keys():
-        value = raw[day_id]
-        if value is None:
+        flattened = text_or_string_to_str(raw[day_id])
+        if flattened is None:
             continue
-        out[day_id] = str(value)
+        out[day_id] = flattened
     return out
 
 
 async def reconcile_items(plan_id: str, target_rows: list[dict]) -> None:
     supabase = get_supabase_client()
+    valid_destination_ids = fetch_destination_ids(supabase, plan_id)
+    target_rows = drop_stale_cross_city_transport(target_rows, valid_destination_ids)
+
     target_ids = {row["id"] for row in target_rows if row.get("id")}
     existing = (
         supabase.table("plan_items")
@@ -160,6 +206,53 @@ async def reconcile_items(plan_id: str, target_rows: list[dict]) -> None:
     stale = existing_ids - target_ids
     if stale:
         supabase.table("plan_items").delete().in_("id", list(stale)).execute()
+
+
+def fetch_destination_ids(supabase, plan_id: str) -> set[str]:
+    """Return the set of plan_destination ids currently attached to the plan.
+    Used to drop cross-city transport items whose source/destination
+    destination_id no longer exists — the destination was deleted while a
+    client was offline and edits are now arriving back."""
+    result = (
+        supabase.table("plan_destinations")
+        .select("id")
+        .eq("plan_id", plan_id)
+        .execute()
+    )
+    return {row["id"] for row in (result.data or [])}
+
+
+def drop_stale_cross_city_transport(
+    rows: list[dict], valid_destination_ids: set[str]
+) -> list[dict]:
+    """Defensive scrub for the offline-merge case. The Yjs `reorderItems`
+    mutation already purges cross-city transport items in touched days, but
+    this is the last line of defence: if a destination was deleted while a
+    client was offline, any cross-city transport pointing at it is now
+    invalid. Drop those rows before upsert so they don't materialise stale
+    routing into the relational store. Custom transport (no `cross_city_pair`)
+    and items pointing at still-valid destinations are kept as-is."""
+    kept: list[dict] = []
+    for row in rows:
+        if row.get("item_type") != "transport":
+            kept.append(row)
+            continue
+        ai_data = row.get("ai_data")
+        if not isinstance(ai_data, dict) or "cross_city_pair" not in ai_data:
+            kept.append(row)
+            continue
+        source = ai_data.get("source_destination_id")
+        destination = ai_data.get("destination_destination_id")
+        if source in valid_destination_ids and destination in valid_destination_ids:
+            kept.append(row)
+            continue
+        logger.info(
+            "Dropping stale cross-city transport %s (source=%s, destination=%s)",
+            row.get("id"),
+            source,
+            destination,
+        )
+    return kept
 
 
 async def reconcile_day_notes(plan_id: str, day_notes: dict[str, str]) -> None:
