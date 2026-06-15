@@ -104,7 +104,7 @@ export function usePlanItinerary({
     // useYDoc effect tears down the stale Hocuspocus provider and reconnects
     // with a fresh JWT — without this the WebSocket would keep getting 403'd
     // by /internal/collab/authorize once the original token expires.
-    const { data: authSub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authSub } = supabase.auth.onAuthStateChange((event, session) => {
       if (cancelled) return;
       setToken(session?.access_token ?? null);
       setCurrentUserId(session?.user?.id ?? null);

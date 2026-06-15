@@ -1,4 +1,5 @@
 import { createBrowserClient } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Cache the browser Supabase client in module scope so every caller in the
 // same tab shares one SupabaseClient — and therefore one GoTrueClient. Two
@@ -9,9 +10,9 @@ import { createBrowserClient } from "@supabase/ssr";
 // Sharing the instance lets the in-process GoTrueClient serialize calls
 // itself with no cross-instance contention. The cache is per-module and
 // can't leak across tabs.
-let browserClient: ReturnType<typeof createBrowserClient> | null = null;
+let browserClient: SupabaseClient | null = null;
 
-export function createClient() {
+export function createClient(): SupabaseClient {
   if (browserClient) return browserClient;
   browserClient = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

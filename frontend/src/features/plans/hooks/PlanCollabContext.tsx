@@ -67,7 +67,7 @@ export function PlanCollabProvider({
 
     void load();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       if (cancelled) return;
       setCurrentUserId(session?.user?.id ?? null);
       if (!session?.user) setProfile(null);
