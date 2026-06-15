@@ -4,6 +4,7 @@ import { Plus } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { type PlanHotel } from "@/lib/api";
+import { usePlanCollab } from "@/features/plans/hooks/PlanCollabContext";
 import HotelBand from "@/features/plans/components/hotels/HotelBand";
 
 interface Props {
@@ -23,6 +24,11 @@ export default function StaysStrip({
   onEditHotel,
   onDeleteHotel,
 }: Props) {
+  const { role } = usePlanCollab();
+  const isViewer = role === "viewer";
+
+  if (isViewer && hotels.length === 0) return null;
+
   return (
     <div className="flex gap-3 overflow-x-auto pb-1">
       {hotels.map((hotel) => (
@@ -36,20 +42,22 @@ export default function StaysStrip({
           />
         </div>
       ))}
-      <button
-        type="button"
-        onClick={onAddStay}
-        disabled={isMutating}
-        className={cn(
-          "flex w-[180px] shrink-0 flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-border bg-card/40 p-4 text-sm text-ink-subtle transition-colors",
-          "hover:border-primary/50 hover:bg-primary/5 hover:text-primary",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary",
-          "disabled:cursor-not-allowed disabled:opacity-60",
-        )}
-      >
-        <Plus className="size-5" strokeWidth={1.5} />
-        Add a stay
-      </button>
+      {!isViewer ? (
+        <button
+          type="button"
+          onClick={onAddStay}
+          disabled={isMutating}
+          className={cn(
+            "flex w-[180px] shrink-0 flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-border bg-card/40 p-4 text-sm text-ink-subtle transition-colors",
+            "hover:border-primary/50 hover:bg-primary/5 hover:text-primary",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary",
+            "disabled:cursor-not-allowed disabled:opacity-60",
+          )}
+        >
+          <Plus className="size-5" strokeWidth={1.5} />
+          Add a stay
+        </button>
+      ) : null}
     </div>
   );
 }

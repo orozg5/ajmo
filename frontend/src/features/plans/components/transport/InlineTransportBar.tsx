@@ -12,6 +12,7 @@ import {
   type SameDayModeOption,
   useSameDayTransportOptions,
 } from "@/features/plans/hooks/useSameDayTransportOptions";
+import { usePlanCollab } from "@/features/plans/hooks/PlanCollabContext";
 
 interface InlineTransportBarProps {
   src: PlanItem;
@@ -49,6 +50,7 @@ function coordinatesOf(item: PlanItem): { lat: number; lng: number } | null {
 }
 
 export default function InlineTransportBar({ src, dst, isAdding, onAdd }: InlineTransportBarProps) {
+  const { role } = usePlanCollab();
   const srcCoord = useMemo(() => coordinatesOf(src), [src]);
   const dstCoord = useMemo(() => coordinatesOf(dst), [dst]);
 
@@ -57,6 +59,7 @@ export default function InlineTransportBar({ src, dst, isAdding, onAdd }: Inline
     dst: dstCoord,
   });
 
+  if (role === "viewer") return null;
   if (!srcCoord || !dstCoord) return null;
 
   const optionsByMode: Record<SameDayMode, SameDayModeOption | null> = {

@@ -16,6 +16,7 @@ interface Props {
   replies: CommentSnapshot[];
   currentUserId: string | null;
   isPlanOwner: boolean;
+  canReply: boolean;
   resolveAuthor: (userId: string | null) => ProfileSummary | null;
   onReply: (parentId: string, body: string) => void;
   onDelete: (commentId: string) => void;
@@ -50,6 +51,7 @@ export default function CommentThread({
   replies,
   currentUserId,
   isPlanOwner,
+  canReply,
   resolveAuthor,
   onReply,
   onDelete,
@@ -63,6 +65,7 @@ export default function CommentThread({
   const profile = resolveAuthor(comment.author_id);
 
   function submitReply() {
+    if (!canReply) return;
     const trimmed = draft.trim();
     if (!trimmed) return;
     try {
@@ -100,7 +103,7 @@ export default function CommentThread({
             {isDeleted ? "comment removed" : comment.body}
           </p>
           <div className="mt-1 flex items-center gap-2 text-[11px] text-ink-subtle">
-            {!isDeleted ? (
+            {canReply && !isDeleted ? (
               <button
                 type="button"
                 onClick={() => setIsReplying((value) => !value)}
@@ -121,7 +124,7 @@ export default function CommentThread({
             ) : null}
           </div>
 
-          {isReplying ? (
+          {isReplying && canReply ? (
             <div className="mt-2 space-y-2">
               <Textarea
                 value={draft}

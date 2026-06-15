@@ -6,16 +6,20 @@ import { StickyNote } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { usePlanCollab } from "@/features/plans/hooks/PlanCollabContext";
 
 interface Props {
   onSave: (title: string, body: string | null) => Promise<void>;
 }
 
 export default function AddNoteInline({ onSave }: Props) {
+  const { role } = usePlanCollab();
   const [isOpen, setIsOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+
+  if (role === "viewer") return null;
 
   function handleCancel() {
     setTitle("");

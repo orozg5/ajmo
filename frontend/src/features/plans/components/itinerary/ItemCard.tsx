@@ -26,6 +26,7 @@ import { type EnrichedItem, type PlanItem } from "@/lib/api";
 import TransportCard from "@/features/plans/components/transport/TransportCard";
 import { useEditingReporter } from "@/features/plans/hooks/useEditingReporter";
 import { useItemNotes } from "@/features/plans/hooks/useItemNotes";
+import { usePlanCollab } from "@/features/plans/hooks/PlanCollabContext";
 import { ITEM_TYPE_STYLE, type ItemType } from "@/features/plans/utils/itemType";
 import EditingPresence from "@/features/plans/components/awareness/EditingPresence";
 import ItemComments from "@/features/plans/components/itinerary/ItemComments";
@@ -55,6 +56,8 @@ export default function ItemCard(props: Props) {
 }
 
 function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = false, onHoverChange }: Props) {
+  const { role } = usePlanCollab();
+  const isViewer = role === "viewer";
   const typeStyle = ITEM_TYPE_STYLE[item.item_type as ItemType];
   const TypeIcon = typeStyle?.Icon;
   const { reportFocus: reportNotesFocus, reportBlur: reportNotesBlur } =
@@ -165,15 +168,17 @@ function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = f
                   <ChevronDown className="size-5" strokeWidth={1.5} />
                 )}
               </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onRemove}
-                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                aria-label={`Remove ${item.title}`}
-              >
-                <Trash2 className="size-5" strokeWidth={1.5} />
-              </Button>
+              {!isViewer ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onRemove}
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  aria-label={`Remove ${item.title}`}
+                >
+                  <Trash2 className="size-5" strokeWidth={1.5} />
+                </Button>
+              ) : null}
             </div>
           </div>
 
@@ -301,6 +306,7 @@ function NonTransportItemCard({ item, onRemove, onNotesUpdate, isHighlighted = f
               onBlur={reportNotesBlur}
               placeholder="Add your notes here…"
               rows={3}
+              disabled={isViewer}
               className="resize-none text-sm"
             />
           </div>

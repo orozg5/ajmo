@@ -6,6 +6,7 @@ import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { type PlanDay } from "@/lib/api";
+import { usePlanCollab } from "@/features/plans/hooks/PlanCollabContext";
 
 export const DAY_DROPPABLE_PREFIX = "day-drop-";
 
@@ -89,6 +90,9 @@ export default function DayTabs({
   onSelectDay,
   onRemoveDay,
 }: Props) {
+  const { role } = usePlanCollab();
+  const canRemoveDays = role !== "viewer" && days.length > 1;
+
   function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
     event.preventDefault();
@@ -111,7 +115,7 @@ export default function DayTabs({
           key={day.id}
           day={day}
           isActive={day.id === activeDayId}
-          canRemove={days.length > 1}
+          canRemove={canRemoveDays}
           isLoading={isLoading}
           onSelect={() => onSelectDay(day.id)}
           onRemove={() => onRemoveDay(day.id)}

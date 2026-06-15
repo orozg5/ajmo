@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { type PlanHotel } from "@/lib/api";
+import { usePlanCollab } from "@/features/plans/hooks/PlanCollabContext";
 
 interface Props {
   hotel: PlanHotel;
@@ -25,6 +26,8 @@ interface Props {
 }
 
 export default function HotelBand({ hotel, activeDayNumber, onEdit, onDelete, isMutating }: Props) {
+  const { role } = usePlanCollab();
+  const isViewer = role === "viewer";
   const isCheckIn = activeDayNumber === hotel.check_in_day_number;
   const isCheckOut = activeDayNumber === hotel.check_out_day_number;
   const title = hotel.place_name ?? hotel.notes ?? "Stay";
@@ -89,21 +92,23 @@ export default function HotelBand({ hotel, activeDayNumber, onEdit, onDelete, is
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1">
-        <Button variant="ghost" size="icon" onClick={onEdit} aria-label={`Edit ${title}`} disabled={isMutating}>
-          <Pencil className="size-4" strokeWidth={1.5} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onDelete}
-          disabled={isMutating}
-          aria-label={`Delete ${title}`}
-          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-        >
-          <Trash2 className="size-4" strokeWidth={1.5} />
-        </Button>
-      </div>
+      {!isViewer ? (
+        <div className="flex shrink-0 items-center gap-1">
+          <Button variant="ghost" size="icon" onClick={onEdit} aria-label={`Edit ${title}`} disabled={isMutating}>
+            <Pencil className="size-4" strokeWidth={1.5} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onDelete}
+            disabled={isMutating}
+            aria-label={`Delete ${title}`}
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 className="size-4" strokeWidth={1.5} />
+          </Button>
+        </div>
+      ) : null}
     </article>
   );
 }

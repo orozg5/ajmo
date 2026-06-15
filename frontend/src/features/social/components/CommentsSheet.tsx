@@ -41,7 +41,8 @@ export default function CommentsSheet({
   scopedItemId,
   scopedItemTitle,
 }: Props) {
-  const { planId, doc, provider, currentUserId } = usePlanCollab();
+  const { planId, doc, provider, currentUserId, role } = usePlanCollab();
+  const canPost = role !== "viewer";
   const allComments = useYComments(doc);
   const remote = useRemoteAwareness(provider);
   const { members } = usePlanMembers(planId);
@@ -104,6 +105,7 @@ export default function CommentsSheet({
   }, [remote, editingKind, editingId]);
 
   function submitTopLevel() {
+    if (!canPost) return;
     const trimmed = draft.trim();
     if (!trimmed) return;
     if (!doc || !currentUserId) {
@@ -170,6 +172,7 @@ export default function CommentsSheet({
                     replies={repliesByParent.get(comment.id) ?? []}
                     currentUserId={currentUserId}
                     isPlanOwner={isPlanOwner}
+                    canReply={canPost}
                     resolveAuthor={resolveAuthor}
                     onReply={postReply}
                     onDelete={removeComment}
@@ -196,17 +199,23 @@ export default function CommentsSheet({
             onBlur={reportBlur}
             placeholder={placeholder}
             rows={3}
+            disabled={!canPost}
             className="resize-none text-sm"
           />
           <div className="flex justify-end">
             <Button
               size="sm"
               onClick={submitTopLevel}
-              disabled={draft.trim().length === 0}
+              disabled={!canPost || draft.trim().length === 0}
             >
               {scopedItemId ? "Post comment" : "Send"}
             </Button>
           </div>
+          {!canPost ? (
+            <p className="text-xs text-ink-subtle">
+              Viewers can read this conversation but can&apos;t post. Ask the plan owner for editor access.
+            </p>
+          ) : null}
         </div>
       </SheetContent>
     </Sheet>

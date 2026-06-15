@@ -8,6 +8,7 @@ import {
   isPlaceholder,
   useAiSuggestions,
 } from "@/features/plans/hooks/useAiSuggestions";
+import { usePlanCollab } from "@/features/plans/hooks/PlanCollabContext";
 import SuggestionCard from "@/features/plans/components/search/SuggestionCard";
 import SkeletonCard from "@/features/plans/components/dashboard/SkeletonCard";
 
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export default function SuggestionsStrip({ planId, days, destinations, onAddItem, initialSuggestions }: Props) {
+  const { role } = usePlanCollab();
   const { suggestions, isLoading, error, refresh, addingNames, addSuggestion, triggerEnrichment } =
     useAiSuggestions({
       planId,
@@ -29,6 +31,7 @@ export default function SuggestionsStrip({ planId, days, destinations, onAddItem
       initialSuggestions,
     });
 
+  if (role === "viewer") return null;
   if (!isLoading && suggestions.length === 0 && !error) return null;
 
   return (

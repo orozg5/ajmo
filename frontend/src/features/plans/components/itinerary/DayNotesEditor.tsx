@@ -6,6 +6,7 @@ import { Loader2, NotebookPen } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { useDayNotes } from "@/features/plans/hooks/useDayNotes";
 import { useEditingReporter } from "@/features/plans/hooks/useEditingReporter";
+import { usePlanCollab } from "@/features/plans/hooks/PlanCollabContext";
 import EditingPresence from "@/features/plans/components/awareness/EditingPresence";
 
 interface Props {
@@ -15,9 +16,13 @@ interface Props {
 }
 
 export default function DayNotesEditor({ dayId, initial, onPersist }: Props) {
+  const { role } = usePlanCollab();
+  const isViewer = role === "viewer";
   const { value, isSaving, handleChange } = useDayNotes({ dayId, initial, onPersist });
   const { reportFocus, reportBlur } = useEditingReporter("day_notes", dayId);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  if (isViewer && !value) return null;
 
   useEffect(() => {
     const element = textareaRef.current;
@@ -51,6 +56,7 @@ export default function DayNotesEditor({ dayId, initial, onPersist }: Props) {
         onBlur={reportBlur}
         placeholder="What's the plan for this day? Any notes…"
         rows={2}
+        disabled={isViewer}
         className="min-h-[3rem] resize-none border-none bg-transparent px-2 py-1.5 text-sm shadow-none focus-visible:ring-0"
       />
     </div>

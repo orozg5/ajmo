@@ -178,7 +178,7 @@ export default function ItineraryPlanner({ plan, destinations, role, itinerary }
         onDragCancel={handleDragCancel}
       >
         <div className="space-y-4">
-          {destinations.length > 0 && (
+          {!isViewer && destinations.length > 0 && (
             <SuggestionsStrip
               planId={plan.id}
               days={days}
@@ -251,14 +251,14 @@ export default function ItineraryPlanner({ plan, destinations, role, itinerary }
                   highlightedItemId={highlightedItemId}
                   onItemHoverChange={handleItemHoverChange}
                   onRefreshCrossCityTransport={
-                    destinations.length > 1 ? handleOpenCrossCity : null
+                    !isViewer && destinations.length > 1 ? handleOpenCrossCity : null
                   }
                 />
               </div>
             )}
 
             <aside className="hidden lg:flex lg:sticky lg:top-4 lg:h-[calc(100vh-2rem)] lg:flex-col lg:gap-3">
-              {destinations.length > 1 && (
+              {!isViewer && destinations.length > 1 && (
                 <button
                   type="button"
                   onClick={handleOpenCrossCity}
@@ -320,7 +320,7 @@ export default function ItineraryPlanner({ plan, destinations, role, itinerary }
             <DrawerTitle>Map</DrawerTitle>
           </DrawerHeader>
           <div className="flex flex-1 flex-col gap-3 overflow-hidden px-4 pb-4">
-            {destinations.length > 1 && (
+            {!isViewer && destinations.length > 1 && (
               <button
                 type="button"
                 onClick={handleOpenCrossCity}

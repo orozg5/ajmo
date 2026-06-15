@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { enrichItem, type EnrichedItem } from "@/lib/api";
 import { useItemEnrichment } from "@/features/plans/hooks/useItemEnrichment";
+import { usePlanCollab } from "@/features/plans/hooks/PlanCollabContext";
 import { FIELD_LABELS } from "@/features/plans/utils/fieldLabels";
 
 const PREFETCH_DWELL_MS = 150;
@@ -29,6 +30,7 @@ interface Props {
 }
 
 export default function ItemSearch({ destination, onEnrich }: Props) {
+  const { role } = usePlanCollab();
   const [itemType, setItemType] = useState<string>("attraction");
   const containerRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
@@ -116,6 +118,8 @@ export default function ItemSearch({ destination, onEnrich }: Props) {
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
+
+  if (role === "viewer") return null;
 
   return (
     <Tabs value={itemType} onValueChange={handleTabChange}>
