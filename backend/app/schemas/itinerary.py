@@ -6,11 +6,8 @@ from pydantic import BaseModel, field_validator
 from app.constants import validate_item_type
 
 
-# ── Request models ─────────────────────────────────────────────────────────────
-
-
 class PlanDayCreate(BaseModel):
-    day_number: int | None = None  # auto-assigned as max + 1 if omitted
+    day_number: int | None = None
     date: str | None = None
 
 
@@ -74,9 +71,6 @@ class PlanHotelUpdate(BaseModel):
     check_out_time: str | None = None
     notes: str | None = None
     sort_key: str | None = None
-
-
-# ── Response models ────────────────────────────────────────────────────────────
 
 
 class PlanItemResponse(BaseModel):

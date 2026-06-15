@@ -55,8 +55,6 @@ async def get_user_preferences_route(
     try:
         prefs = await get_preferences(current_user)
         if prefs is None:
-            # First-login users have no row yet; return an empty response rather than
-            # 404 so the settings form shows a clean slate instead of an error toast.
             return UserPreferencesResponse(user_id=current_user)
         return prefs
     except Exception:

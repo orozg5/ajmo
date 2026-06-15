@@ -9,9 +9,6 @@ from pydantic import BaseModel, Field
 PlanVisibility = Literal["private", "link", "friends", "public"]
 
 
-# ── Request models ─────────────────────────────────────────────────────────────
-
-
 class PlanCreate(BaseModel):
     owner_id: str | None = Field(None, description="UUID of the plan owner; injected from JWT by the route handler")
     title: str = Field(..., min_length=1, description="Plan title")
@@ -33,12 +30,7 @@ class PlanUpdate(BaseModel):
     cover_image_url: str | None = None
 
 
-# ── Response models ────────────────────────────────────────────────────────────
-
-
 class DestinationSummary(BaseModel):
-    """Lightweight destination info attached to plan list responses."""
-
     id: str
     city: str
     country: str
@@ -55,6 +47,6 @@ class PlanResponse(BaseModel):
     visibility: PlanVisibility
     cover_image_path: str | None = None
     cover_image_url: str | None = None
-    yjs_state: None = None  # never expose binary CRDT to API consumers
+    yjs_state: None = None
     created_at: str
     destinations: list[DestinationSummary] | None = None

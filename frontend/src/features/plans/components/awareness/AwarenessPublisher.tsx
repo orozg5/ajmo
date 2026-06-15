@@ -5,15 +5,7 @@ import { useEffect } from "react";
 import { usePlanCollab } from "@/features/plans/hooks/PlanCollabContext";
 import type { AwarenessState } from "@/lib/yjs/schema";
 
-/**
- * Headless component — owns the local awareness state for this plan room.
- *
- * Sets the user identity once the provider + profile are resolved, and
- * cleans up on unmount. The `editing` field is written by the components
- * that own each free-text surface (`useEditingReporter` from notes
- * editors, `CommentsSheet` for the comment composer); this component
- * just establishes the user identity and a clean initial state.
- */
+/** Establishes user identity + clean initial awareness state. The `editing` field is written by the components owning each free-text surface (`useEditingReporter`, `CommentsSheet`). */
 export default function AwarenessPublisher() {
   const { provider, currentUser } = usePlanCollab();
 

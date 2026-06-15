@@ -25,9 +25,7 @@ export default function LogoutButton({
   async function handleLogout() {
     const supabase = createClient();
     await supabase.auth.signOut();
-    // Drop every cached plan Y.Doc so the next user on this device can't see
-    // the previous user's offline edits. Best-effort — failures don't block
-    // the sign-out flow.
+    // Prevent the next user on this device from seeing the previous user's offline edits.
     await destroyAllPlanPersistence();
     router.push("/login");
     router.refresh();

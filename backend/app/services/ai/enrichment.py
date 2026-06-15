@@ -23,8 +23,6 @@ from app.services.places.repository import (
 logger = logging.getLogger(__name__)
 
 
-# ── Per-type configuration ────────────────────────────────────────────────────
-
 SEARCH_QUERY_TEMPLATES = {
     "attraction": "{name} {destination} attraction hours price",
     "restaurant": "{name} {destination} restaurant cuisine price hours reservation",
@@ -44,8 +42,6 @@ FRESH_FIELDS = {
 }
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
 LEADING_ARTICLE_RE = re.compile(r"^(the|a|an)\s+", re.IGNORECASE)
 
 NAME_TOKEN_STOPWORDS = {
@@ -59,11 +55,7 @@ NAME_TOKEN_STOPWORDS = {
 
 
 def build_cache_key(name: str, destination: str, item_type: str) -> str:
-    """Generate a deterministic slug keyed on name + destination + type.
-
-    Leading articles (the, a, an) are stripped before slugifying so variants
-    like "Eiffel Tower" and "The Eiffel Tower" collapse to one key.
-    """
+    """Leading articles (the/a/an) are stripped so 'Eiffel Tower' and 'The Eiffel Tower' collapse to one key."""
     normalized_name = LEADING_ARTICLE_RE.sub("", name).strip()
     raw = f"{normalized_name} {destination}".lower()
     slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
@@ -71,23 +63,13 @@ def build_cache_key(name: str, destination: str, item_type: str) -> str:
 
 
 def names_share_significant_token(a: str, b: str) -> bool:
-    """Return True if two names share at least one significant token.
-
-    Used to detect when the LLM substitutes a different establishment for the
-    user's input (e.g. "Hotel Lutetia" → "Les Botanistes"). Stop words like
-    "hotel", "the", "le" are dropped before comparison so a true canonical
-    expansion ("Hilton" → "Hilton Paris Opera") still matches on the brand
-    token.
-    """
+    """Detect LLM substitutions (e.g. 'Hotel Lutetia' → 'Les Botanistes') while letting canonical expansions ('Hilton' → 'Hilton Paris Opera') match on the brand token."""
     def significant_tokens(s: str) -> set[str]:
         return {
             t for t in re.split(r"[^a-z0-9]+", s.lower())
             if t and t not in NAME_TOKEN_STOPWORDS
         }
     return bool(significant_tokens(a) & significant_tokens(b))
-
-
-# ── Cache layer ───────────────────────────────────────────────────────────────
 
 
 async def get_cached_attraction(cache_key: str) -> dict | None:
@@ -122,11 +104,8 @@ async def store_attraction_cache(cache_key: str, data: dict) -> None:
     ).execute()
 
 
-# ── Tavily search ─────────────────────────────────────────────────────────────
-
-
 async def search_item(name: str, destination: str, item_type: str, *, deep: bool = False) -> str:
-    """Fetch Tavily context; advanced depth for hotels or a deep retry."""
+    """Advanced depth for hotels or a deep retry; basic otherwise."""
     client = AsyncTavilyClient(api_key=settings.TAVILY_API_KEY)
     query = SEARCH_QUERY_TEMPLATES[item_type].format(name=name, destination=destination)
 
@@ -161,11 +140,7 @@ async def search_item(name: str, destination: str, item_type: str, *, deep: bool
     return "\n\n".join(context_parts)
 
 
-# ── LLM enrichment ────────────────────────────────────────────────────────────
-
-
 def build_prompt(name: str, destination: str, item_type: str, search_context: str) -> str:
-    """Type-aware extraction prompt. Structured output handles JSON shape."""
     fresh = ", ".join(FRESH_FIELDS[item_type])
     return f"""You are a travel information assistant extracting facts about a {item_type}.
 
@@ -182,7 +157,6 @@ Set any field to null when the search results do not support a confident answer.
 
 
 async def enrich_with_llm(name: str, destination: str, item_type: str, search_context: str) -> dict:
-    """Structured enrichment via call_structured. Returns a plain dict."""
     prompt = build_prompt(name, destination, item_type, search_context)
     response: EnrichmentResponse = await call_structured(
         "enrich", EnrichmentResponse, prompt, temperature=0.0, max_tokens=1024,
@@ -190,21 +164,12 @@ async def enrich_with_llm(name: str, destination: str, item_type: str, search_co
     return response.model_dump(mode="json", exclude_none=False)
 
 
-# ── Orchestrator ──────────────────────────────────────────────────────────────
-
-
-# Per-process single-flight registry: concurrent callers with the same raw
-# slug await the same Task instead of duplicating Tavily + LLM work. The
-# typical race is a background suggestion-enrichment batch and an Add-button
-# click both landing on the same item within seconds.
 INFLIGHT: dict[str, asyncio.Task[dict]] = {}
+"""Single-flight: concurrent callers with the same slug share one task instead of duplicating Tavily + LLM work."""
 
 
 async def get_place_data(name: str, destination: str, item_type: str) -> dict:
-    """Unified lookup: slug_aliases → ai_attraction_cache → places → LLM fallback.
-
-    Returns full merged place data (stable + fresh).
-    """
+    """Unified lookup: slug_aliases → ai_attraction_cache → places → LLM fallback."""
     raw_slug = build_cache_key(name, destination, item_type)
 
     existing = INFLIGHT.get(raw_slug)
@@ -264,8 +229,6 @@ async def compute_place_data(raw_slug: str, name: str, destination: str, item_ty
 
     existing_place = await get_place_by_slug(canonical_slug, item_type)
     if existing_place is not None:
-        # Stable fields (image_url, lat/lng, timezone) already known —
-        # only refresh the volatile cache; skip Pexels and Nominatim.
         fresh_data = {k: data[k] for k in FRESH_FIELDS[item_type] if k in data}
         try:
             await store_attraction_cache(canonical_slug, fresh_data)
@@ -325,12 +288,7 @@ async def compute_place_data(raw_slug: str, name: str, destination: str, item_ty
 
 
 async def stream_place_data(name: str, destination: str, item_type: str):
-    """Yield enrichment field updates as the LLM streams.
-
-    Cache hit: emits all merged (stable + fresh) fields immediately.
-    Cache miss: runs Tavily, streams the LLM, emits each field when it first
-    appears or changes in the accumulating partial. Persists at stream end.
-    """
+    """Yield enrichment field updates as the LLM streams; cache hit emits all known fields immediately."""
     raw_slug = build_cache_key(name, destination, item_type)
     canonical_slug = await resolve_slug_alias(raw_slug)
     lookup_slug = canonical_slug if canonical_slug else raw_slug

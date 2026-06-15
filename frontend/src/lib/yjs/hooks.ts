@@ -31,18 +31,8 @@ export interface UseYDocReturn {
   provider: HocuspocusProvider | null;
   status: ConnectionStatus;
   role: PlanRole;
-  /** True once the server-side seed has been applied at least once. Lets the
-   * UI fall back to REST initialDays during the first render and switch to
-   * Yjs once the doc is populated. */
   isSynced: boolean;
-  /** True once the IndexedDB-backed Y.Doc state has finished hydrating into
-   * the in-memory CRDT. Components that block their first paint on this can
-   * avoid a flash of empty state when opening a plan offline or before the
-   * websocket connects. */
   localLoaded: boolean;
-  /** True while the local Y.Doc has writes that haven't been flushed to the
-   * Hocuspocus server yet. Drives the connection-status badge's "Saving…"
-   * state. Kept up-to-date via the provider's `unsyncedChanges` event. */
   hasUnsyncedChanges: boolean;
 }
 
@@ -53,17 +43,7 @@ export interface UseYDocOptions {
 }
 
 export function useYDoc({ planId, token, initialRole }: UseYDocOptions): UseYDocReturn {
-  // The Y.Doc + IndexedDB persistence live for as long as the user is on
-  // this plan, regardless of whether they currently have a valid auth token.
-  // Tying their lifecycle to (planId, token) caused two regressions: (a) on
-  // OS-level offline, Supabase couldn't refresh the session, token went null,
-  // and the doc was destroyed — edits had nowhere to land. (b) On DevTools
-  // online↔offline, every token-refresh re-rendered the effect, destroyed the
-  // doc + persistence, and the new persistence read stale state because
-  // y-indexeddb's destroy() doesn't await pending writes (verified at
-  // node_modules/y-indexeddb/...:113). Offline edits got silently dropped.
-  // Splitting the effects makes the doc tied to the *resource* (planId) and
-  // the provider tied to the *credential* (planId + token).
+  // Doc + IDB persistence are tied to planId (the *resource*); the provider is tied to planId+token (the *credential*). Otherwise a Supabase refresh while offline nulls token, destroys the doc, and drops queued offline edits.
   const [doc, setDoc] = useState<Y.Doc | null>(null);
   const [persistence, setPersistence] = useState<IndexeddbPersistence | null>(
     null,
@@ -75,14 +55,12 @@ export function useYDoc({ planId, token, initialRole }: UseYDocOptions): UseYDoc
   const [localLoaded, setLocalLoaded] = useState(false);
   const [hasUnsyncedChanges, setHasUnsyncedChanges] = useState(false);
 
-  // ── Doc + IndexedDB persistence — lifecycle tied to planId only ─────────
   useEffect(() => {
     const {
       doc: createdDoc,
       persistence: createdPersistence,
       localLoaded: localLoadedPromise,
     } = createPlanDoc({ planId });
-    // The doc owns the in-memory CRDT; persistence owns the IDB connection.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setDoc(createdDoc);
     setPersistence(createdPersistence);
@@ -95,12 +73,7 @@ export function useYDoc({ planId, token, initialRole }: UseYDocOptions): UseYDoc
 
     return () => {
       cancelled = true;
-      // Order matters: destroy persistence first so its `doc.on("destroy")`
-      // handler doesn't fire mid-teardown. We await the close Promise
-      // even though it doesn't flush in-flight writes (y-indexeddb library
-      // limitation, file:line 113) — at minimum it closes the IDB
-      // connection cleanly, and on cross-plan navigation the DB name
-      // changes so there's no race against a new instance.
+      // Destroy persistence before doc so its `doc.on("destroy")` handler doesn't fire mid-teardown. y-indexeddb's destroy() doesn't flush in-flight writes; safe because cross-plan navigation changes the DB name.
       void createdPersistence.destroy();
       createdDoc.destroy();
       setDoc(null);
@@ -109,11 +82,7 @@ export function useYDoc({ planId, token, initialRole }: UseYDocOptions): UseYDoc
     };
   }, [planId]);
 
-  // ── Hocuspocus provider — lifecycle tied to (doc, token, localLoaded) ───
-  // Gated on localLoaded so the IndexedDB-hydrated state lands in the doc
-  // before the websocket sync handshake runs. Without this gate, the server's
-  // state can be applied to an empty doc, and the late-arriving IDB updates
-  // race against an already-"synced" provider that may not forward them.
+  // Gated on localLoaded so the IDB-hydrated state lands in the doc before the websocket sync handshake runs. Otherwise the server state applies to an empty doc and late-arriving IDB updates race an already-"synced" provider that may not forward them.
   useEffect(() => {
     if (!doc || !token || !localLoaded) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -156,13 +125,8 @@ export function useYDoc({ planId, token, initialRole }: UseYDocOptions): UseYDoc
     };
   }, [doc, planId, token, localLoaded]);
 
-  // Persistence is owned by the doc effect but not directly read elsewhere.
-  // Reference it so eslint-unused-vars doesn't complain and so an inspector
-  // can see what's attached.
   void persistence;
 
-  // Derive status from token presence so we don't have to write to state from
-  // an effect for the "no token yet" branch.
   const status: ConnectionStatus = token ? providerStatus : "disconnected";
 
   return {
@@ -180,9 +144,7 @@ function snapshotItem(map: Y.Map<unknown>): PlanItem {
   const out: Record<string, unknown> = { plan_id: "" };
   for (const field of ITEM_FIELDS) {
     const value = map.get(field);
-    // `notes` is a Y.Text after the 7f migration so concurrent edits merge
-    // character-level; legacy plan_items written before the migration still
-    // have a plain string in this slot, which we pass through unchanged.
+    // `notes` became Y.Text in Phase 7f for character-level merge; legacy plain strings pass through.
     if (field === "notes") {
       out[field] = value instanceof Y.Text ? value.toString() : value ?? null;
     } else {
@@ -219,7 +181,6 @@ interface ItemsCache {
 
 const EMPTY_ITEMS: Record<string, PlanItem[]> = Object.freeze({});
 
-/** Subscribe to the items root map and emit a snapshot keyed by day_id. */
 export function useYAllItems(doc: Y.Doc | null): Record<string, PlanItem[]> {
   const cache = useRef<ItemsCache>({ doc: null, key: "", value: EMPTY_ITEMS });
 
@@ -270,13 +231,7 @@ interface NotesCache {
 
 const EMPTY_NOTES: Record<string, string> = Object.freeze({});
 
-/** Subscribe to the day_notes map and emit a snapshot.
- *
- * Each value is a `Y.Text` after the 7f migration. `observeDeep` is required
- * (not `observe`) so an insert/delete *inside* a Y.Text — which doesn't
- * change the parent map's key set — still triggers a re-render. Legacy
- * plain-string entries are tolerated for plans whose `yjs_state` predates
- * the migration. */
+/** `observeDeep` is required so edits inside a Y.Text trigger re-render even though the parent map's key set is unchanged; legacy plain-string entries from pre-7f plans pass through. */
 export function useYAllDayNotes(doc: Y.Doc | null): Record<string, string> {
   const cache = useRef<NotesCache>({ doc: null, key: "", value: EMPTY_NOTES });
 
@@ -327,10 +282,7 @@ interface PlanMetaCache {
 
 const EMPTY_PLAN_META: PlanMetaPatch = Object.freeze({});
 
-/** Subscribe to the plan_meta broadcast map. Returns whichever fields have
- * been published by the most recent saver — keys not present here mean no
- * one has broadcast that field, so the caller falls back to its REST props.
- */
+/** Missing keys mean no one has broadcast that field; caller falls back to its REST props. */
 export function useYPlanMeta(doc: Y.Doc | null): PlanMetaPatch {
   const cache = useRef<PlanMetaCache>({ doc: null, key: "", value: EMPTY_PLAN_META });
 
@@ -370,8 +322,6 @@ export function useYPlanMeta(doc: Y.Doc | null): PlanMetaPatch {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-// ── Likes ────────────────────────────────────────────────────────────────────
-
 export interface LikeSummary {
   count: number;
   userIds: string[];
@@ -386,8 +336,6 @@ interface LikesCache {
 
 const EMPTY_LIKES: Map<string, LikeSummary> = new Map();
 
-/** Subscribe to the likes root. Returns a Map keyed by item_id with counts +
- * the current user's like state. */
 export function useYAllLikes(
   doc: Y.Doc | null,
   currentUserId: string | null,
@@ -431,8 +379,6 @@ export function useYAllLikes(
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
-
-// ── Ratings ──────────────────────────────────────────────────────────────────
 
 export interface RatingSummary {
   avg: number;
@@ -502,8 +448,6 @@ export function useYAllRatings(
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-// ── Comments ─────────────────────────────────────────────────────────────────
-
 export interface CommentSnapshot {
   id: string;
   plan_item_id: string | null;
@@ -520,7 +464,6 @@ function snapshotComment(map: Y.Map<unknown>): CommentSnapshot {
   for (const field of COMMENT_FIELDS as readonly CommentField[]) {
     out[field] = map.get(field) ?? null;
   }
-  // body is not nullable in DB; coerce explicitly.
   if (typeof out.body !== "string") out.body = "";
   return out as unknown as CommentSnapshot;
 }
@@ -575,8 +518,6 @@ export function useYComments(doc: Y.Doc | null): CommentSnapshot[] {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-// ── Awareness (presence + typing) ───────────────────────────────────────────
-
 export interface RemoteAwarenessEntry extends AwarenessState {
   clientId: number;
 }
@@ -589,9 +530,7 @@ interface AwarenessCache {
 
 const EMPTY_AWARENESS: RemoteAwarenessEntry[] = [];
 
-/** Subscribe to the provider's awareness channel. Returns the list of remote
- * client states (excluding our own). Fingerprinting on user/focus/typing only
- * keeps useSyncExternalStore from rerendering on every awareness ping. */
+/** Fingerprint on user/focus/typing only — keeps useSyncExternalStore from rerendering on every awareness ping. */
 export function useRemoteAwareness(
   provider: HocuspocusProvider | null,
 ): RemoteAwarenessEntry[] {

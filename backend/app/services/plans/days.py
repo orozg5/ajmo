@@ -15,24 +15,12 @@ class DateShrinkBlocked(ValueError):
     """
 
 
-# ── Service functions ─────────────────────────────────────────────────────────
-
-
 async def initialize_days(plan_id: str, date_from: date | str | None, date_to: date | str | None) -> list[dict]:
-    """Idempotent: create days for the plan if none exist yet.
-
-    - If days already exist, return them unchanged.
-    - If date_from and date_to are both set, create one day per calendar date.
-    - Otherwise create a single Day 1 with no date.
-
-    Accepts date objects or ISO date strings (as returned by Supabase).
-    """
     supabase = get_supabase_client()
     existing = supabase.table("plan_days").select("*").eq("plan_id", plan_id).execute()
     if existing.data:
         return existing.data
 
-    # Normalise to date objects if strings were passed in
     if isinstance(date_from, str):
         date_from = date.fromisoformat(date_from)
     if isinstance(date_to, str):
@@ -64,17 +52,7 @@ async def sync_days(
     date_from: date | str | None,
     date_to: date | str | None,
 ) -> list[dict]:
-    """Reconcile plan_days with a new date range.
-
-    - If the new range is open-ended (either bound is None), leave existing
-      rows unchanged — open-ended plans use a single undated Day 1 seeded
-      by initialize_days, which we don't touch here.
-    - Otherwise insert any missing dates, drop any extras that are empty,
-      and renumber day_number sequentially in date order starting at 1.
-    - Raises DateShrinkBlocked if any day that would be dropped holds items.
-
-    Idempotent on a fully-matching range.
-    """
+    """Reconcile plan_days with a new date range. Raises DateShrinkBlocked if any dropped day holds items."""
     supabase = get_supabase_client()
 
     if isinstance(date_from, str):
@@ -175,11 +153,6 @@ async def sync_days(
 
 
 async def list_days_with_items(plan_id: str) -> list[dict]:
-    """Return all days for a plan, each with their items embedded, ordered by day_number.
-
-    Items carry the joined `places` row hydrated into `ai_data` so map and
-    detail UIs always see the freshest stable fields (lat/lng/image_url).
-    """
     supabase = get_supabase_client()
     result = (
         supabase.table("plan_days")
@@ -204,7 +177,6 @@ async def list_days_with_items(plan_id: str) -> list[dict]:
 
 
 async def update_day(day_id: str, payload: dict) -> dict | None:
-    """Update title/notes on a day. Returns the fresh row, or None if missing."""
     if not payload:
         return None
     supabase = get_supabase_client()
@@ -220,7 +192,6 @@ async def update_day(day_id: str, payload: dict) -> dict | None:
 
 
 async def create_day(plan_id: str, day_number: int, date_value: str | None = None) -> dict:
-    """Insert a new day and return the created row."""
     supabase = get_supabase_client()
     payload: dict = {"plan_id": plan_id, "day_number": day_number}
     if date_value is not None:
@@ -232,7 +203,6 @@ async def create_day(plan_id: str, day_number: int, date_value: str | None = Non
 
 
 async def delete_day(day_id: str) -> None:
-    """Delete a day by id. Items are cascade-deleted by the FK constraint."""
     supabase = get_supabase_client()
     result = supabase.table("plan_days").delete().eq("id", day_id).execute()
     if not result.data:

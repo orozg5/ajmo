@@ -34,7 +34,6 @@ from app.services.users.preferences import get_preferences
 
 
 def sse_event(event: str, data: object) -> str:
-    """Format a single Server-Sent Event frame."""
     payload = data if isinstance(data, str) else json.dumps(data, default=str)
     return f"event: {event}\ndata: {payload}\n\n"
 
@@ -45,12 +44,7 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 @router.post("/enrich")
 async def enrich_item_route(body: EnrichRequest, request: Request) -> EnrichedItemResponse:
-    """
-    Enrich a travel item with live AI-generated data.
-    Supports item_type: attraction, restaurant, hotel, transport, activity.
-    Checks the 24-hour cache first; falls back to Tavily + Gemini on a miss.
-    Cancels the enrichment pipeline if the client disconnects mid-request.
-    """
+    """Cancels the enrichment pipeline if the client disconnects mid-request."""
     enrichment = asyncio.create_task(
         get_place_data(body.name, body.destination, body.item_type)
     )
@@ -80,10 +74,8 @@ async def enrich_item_route(body: EnrichRequest, request: Request) -> EnrichedIt
     try:
         return enrichment.result()
     except RuntimeError as exc:
-        # Tavily returned no results
         raise HTTPException(status_code=502, detail=str(exc))
     except ValueError as exc:
-        # LLM returned unparseable JSON or invalid item_type
         raise HTTPException(status_code=500, detail=str(exc))
     except Exception:
         logger.exception("Unexpected error in enrichment pipeline")
@@ -92,11 +84,6 @@ async def enrich_item_route(body: EnrichRequest, request: Request) -> EnrichedIt
 
 @router.post("/enrich-batch")
 async def enrich_batch_route(body: EnrichBatchRequest) -> list[EnrichedItemResponse]:
-    """
-    Enrich up to 5 travel items concurrently.
-    Each item follows the same enrichment pipeline as POST /ai/enrich.
-    Returns results in the same order as the input items.
-    """
     tasks = [
         get_place_data(item.name, item.destination, item.item_type)
         for item in body.items
@@ -118,23 +105,16 @@ async def suggest_items_route(
     body: SuggestionsRequest,
     current_user: str = Depends(get_current_user),
 ) -> AiSuggestionsResponse:
-    """
-    Generate AI suggestions for a travel plan based on destination, existing items,
-    and the user's saved preferences. Reads from plans.suggestions (JSONB); calls
-    LLM only on a miss or when force_refresh=True.
-    """
     try:
         days = await list_days_with_items(body.plan_id)
     except Exception:
         logger.exception("Failed to list days for plan %s", body.plan_id)
         raise HTTPException(status_code=500, detail="Failed to load itinerary")
 
-    # Collect existing item names across ALL days to avoid duplicate suggestions
     existing_names: list[str] = [
         item["title"] for day in days for item in day.get("items", [])
     ]
 
-    # Preferences are optional — missing preferences degrade gracefully
     try:
         preferences = await get_preferences(current_user)
     except Exception:
@@ -163,12 +143,6 @@ async def next_suggestion_route(
     body: NextSuggestionRequest,
     current_user: str = Depends(get_current_user),
 ) -> AiSuggestionItemResponse:
-    """
-    Return a single new suggestion not in exclude_names.
-
-    Checks plans.suggestions first (zero tokens). Calls LLM with temperature=0.6
-    only if all saved suggestions are exhausted.
-    """
     try:
         days = await list_days_with_items(body.plan_id)
     except Exception:
@@ -210,14 +184,7 @@ async def get_cross_city_transport_route(
     body: CrossCityTransportRequest,
     current_user: str = Depends(get_current_user),
 ) -> TransportSuggestionsResponse:
-    """
-    Generate transport suggestions for inter-city transitions only.
-
-    For each consecutive destination pair: last item of city A -> first item of city B.
-    Response includes source_city, destination_city, source_day_number, destination_day_number
-    so the frontend can render "Philadelphia → Washington DC" context in the day picker.
-    Results are cached in plans.transport_suggestions["cross_city"].
-    """
+    """Inter-city transitions only (last item of city A → first item of city B); cached in plans.transport_suggestions['cross_city']."""
     try:
         suggestions_data = await get_cross_city_suggestions(body.plan_id)
         suggestions = [TransportSuggestionItem(**s) for s in suggestions_data]
@@ -230,9 +197,6 @@ async def get_cross_city_transport_route(
     return TransportSuggestionsResponse(suggestions=suggestions)
 
 
-# ── SSE streaming variants ────────────────────────────────────────────────────
-
-
 @router.get("/enrich/stream")
 async def enrich_stream_route(
     request: Request,
@@ -240,11 +204,7 @@ async def enrich_stream_route(
     destination: str = Query(..., min_length=1, max_length=120),
     item_type: str = Query(...),
 ) -> StreamingResponse:
-    """Stream AI enrichment field-by-field as the LLM generates them.
-
-    Frames: `event: field\\ndata: {"field": "...", "value": ...}\\n\\n`.
-    Terminates with `event: done` or `event: error`.
-    """
+    """Stream AI enrichment field-by-field as the LLM generates them."""
     try:
         validated_type = validate_item_type(item_type)
     except ValueError as exc:
@@ -270,15 +230,7 @@ async def suggestions_stream_route(
     plan_id: str = Query(..., description="UUID of the plan"),
     current_user: str = Depends(get_current_user),
 ) -> StreamingResponse:
-    """Stream AI suggestions one-by-one.
-
-    Reads plans.suggestions first and emits cached suggestions immediately; on a
-    miss, streams new ones from the LLM, enriches each, and persists the full
-    list at the end.
-
-    Frames: `event: suggestion\\ndata: <SuggestionItem JSON>\\n\\n`.
-    Terminates with `event: done` or `event: error`.
-    """
+    """Stream AI suggestions one-by-one; cache hits emit immediately, misses stream from the LLM and persist the full list at the end."""
     async def event_stream():
         try:
             days = await list_days_with_items(plan_id)
@@ -313,17 +265,7 @@ async def transport_stream_route(
     plan_id: str = Query(..., description="UUID of the plan"),
     current_user: str = Depends(get_current_user),
 ) -> StreamingResponse:
-    """Stream cross-city transport suggestions pair-by-pair.
-
-    Generates cross-city pairs only (last item of city A → first item of city B
-    across the plan). Cached pairs emit first, then new ones come from the
-    backend orchestrator (OSRM driving, Transitous train/bus/ferry, haversine
-    flight estimator) and persist. Same-day same-city routing is handled by the
-    frontend via OSRM and the /transit/directions endpoint.
-
-    Frames: `event: pair\\ndata: <TransportSuggestionItem JSON>\\n\\n`.
-    Terminates with `event: done` or `event: error`.
-    """
+    """Stream cross-city transport pairs; same-day same-city routing is handled by the frontend via OSRM and /transit/directions."""
     async def event_stream():
         try:
             async for pair in stream_cross_city_suggestions(plan_id):

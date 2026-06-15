@@ -4,9 +4,6 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-# ── Request models ─────────────────────────────────────────────────────────────
-
-
 class UserPreferencesUpdate(BaseModel):
     interest_tags: list[str] | None = None
     dietary: list[str] | None = None
@@ -18,9 +15,6 @@ class ProfileUpdate(BaseModel):
     display_name: str | None = Field(None, max_length=80)
     avatar_url: str | None = None
     bio: str | None = Field(None, max_length=400)
-
-
-# ── Response models ────────────────────────────────────────────────────────────
 
 
 class UserPreferencesResponse(BaseModel):

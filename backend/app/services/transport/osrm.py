@@ -1,18 +1,4 @@
-"""Backend OSRM client (FOSSGIS public instance, no API key).
-
-Both same-day inline routing and cross-city driving go through here so the
-frontend never talks to FOSSGIS directly — that path is fragile from many
-client networks (DNS pinning, hosts-file workarounds, browser DNS cache).
-The backend's network is reliable, and centralising the call lets us share
-the retry/timeout policy with the cross-city orchestrator.
-
-FOSSGIS runs three OSRM instances at host-prefixed paths so walk and bike
-are routed against the right profile. Caps at ~1 req/sec per host; retry
-once on transient failure.
-
-Returns None when OSRM has no route (e.g. continental island pairs) or the
-public instance returns an error — callers drop the option.
-"""
+"""Backend OSRM client (FOSSGIS public instance) — frontend never talks to FOSSGIS directly because that path is fragile from many client networks (DNS pinning, hosts-file workarounds, browser DNS cache)."""
 from __future__ import annotations
 
 import asyncio
@@ -47,7 +33,6 @@ class OsrmRouteResult(BaseModel):
     geometry: list[list[float]]
 
 
-# Backwards-compatible alias for the cross-city orchestrator.
 OsrmDrivingResult = OsrmRouteResult
 
 
@@ -55,10 +40,7 @@ client: httpx.AsyncClient | None = None
 
 
 def get_client() -> httpx.AsyncClient:
-    """Lazy-init shared async HTTP client. FOSSGIS asks every caller to send
-    a descriptive User-Agent — we reuse `GEOCODER_USER_AGENT` for the same
-    operational identity used by Nominatim and Transitous.
-    """
+    """FOSSGIS requires a descriptive User-Agent — reuses GEOCODER_USER_AGENT to share operational identity with Nominatim and Transitous."""
     global client
     if client is None:
         client = httpx.AsyncClient(
@@ -69,7 +51,7 @@ def get_client() -> httpx.AsyncClient:
 
 
 async def close_osrm_client() -> None:
-    """Shut down the shared HTTP client. Idempotent."""
+    """Idempotent."""
     global client
     if client is not None:
         await client.aclose()
@@ -124,7 +106,7 @@ async def get_route(
     dst_lat: float,
     dst_lng: float,
 ) -> OsrmRouteResult | None:
-    """OSRM route via FOSSGIS with one short retry on transient failure."""
+    """One short retry on transient failure."""
     first = await fetch_route_once(profile, src_lat, src_lng, dst_lat, dst_lng)
     if first is not None:
         return first
@@ -138,5 +120,4 @@ async def get_driving_route(
     dst_lat: float,
     dst_lng: float,
 ) -> OsrmRouteResult | None:
-    """Convenience wrapper preserved for cross-city orchestrator imports."""
     return await get_route("driving", src_lat, src_lng, dst_lat, dst_lng)

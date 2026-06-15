@@ -11,7 +11,6 @@ PLACE_FIELDS = "id, slug, name, image_url, description, location, lat, lng"
 
 
 async def hydrate_place_fields(hotels: list[dict]) -> None:
-    """Inject place_* fields on each hotel by joining places + ai_attraction_cache."""
     place_ids = [hotel["place_id"] for hotel in hotels if hotel.get("place_id")]
     if not place_ids:
         return
@@ -56,11 +55,7 @@ async def hydrate_place_fields(hotels: list[dict]) -> None:
             hotel["place_price_range"] = cache.get("price_range")
 
 
-# ── Service functions ─────────────────────────────────────────────────────────
-
-
 async def list_hotels(plan_id: str) -> list[dict]:
-    """Return all hotels for a plan, ordered by check-in day."""
     supabase = get_supabase_client()
     result = (
         supabase.table("plan_hotels")
@@ -75,7 +70,6 @@ async def list_hotels(plan_id: str) -> list[dict]:
 
 
 async def create_hotel(plan_id: str, payload: dict) -> dict:
-    """Insert a new hotel row and return the created row (with place fields attached)."""
     supabase = get_supabase_client()
     insert_payload = {**payload, "plan_id": plan_id}
     result = supabase.table("plan_hotels").insert(insert_payload).execute()
@@ -87,7 +81,6 @@ async def create_hotel(plan_id: str, payload: dict) -> dict:
 
 
 async def update_hotel(hotel_id: str, payload: dict) -> dict | None:
-    """Update a hotel. Returns the fresh row, or None if missing."""
     if not payload:
         return None
     supabase = get_supabase_client()
@@ -105,7 +98,6 @@ async def update_hotel(hotel_id: str, payload: dict) -> dict | None:
 
 
 async def delete_hotel(hotel_id: str) -> None:
-    """Delete a hotel row by id."""
     supabase = get_supabase_client()
     result = supabase.table("plan_hotels").delete().eq("id", hotel_id).execute()
     if not result.data:

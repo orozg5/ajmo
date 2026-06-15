@@ -11,8 +11,6 @@ import { getTripStatus } from "@/features/plans/utils/tripStatus";
 
 type HomeHeroProps = {
   greetingName: string | null;
-  // Stats are derived from the user's own ("owner") plans only — these are the
-  // trips they actually book/run, distinct from anything shared or discoverable.
   ownerPlans: Plan[];
 };
 

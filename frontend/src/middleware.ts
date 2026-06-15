@@ -2,7 +2,6 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function middleware(request: NextRequest) {
-  // Must reassign inside setAll to propagate refreshed cookies to the response
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -24,8 +23,7 @@ export async function middleware(request: NextRequest) {
     },
   );
 
-  // getUser() validates the token with the Supabase server on every request.
-  // Never use getSession() here — it only reads the local cookie and would accept expired tokens.
+  // getSession() would accept expired tokens — getUser() round-trips to Supabase to validate.
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -37,9 +35,6 @@ export async function middleware(request: NextRequest) {
   if (!user && !isAuthRoute && !isCallback) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    // Preserve the original target (path + query) so the login form can
-    // bounce the user back after sign-in. Skip "/" — there's nothing to
-    // come back to.
     if (pathname !== "/") {
       url.searchParams.set("next", pathname + request.nextUrl.search);
     }

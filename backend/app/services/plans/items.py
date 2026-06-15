@@ -11,13 +11,7 @@ HYDRATION_FIELDS = ("lat", "lng", "image_url", "description", "location", "timez
 
 
 def hydrate_item(item: dict) -> dict:
-    """Merge linked `places` row into `ai_data` so the frontend reads one shape.
-
-    The expected input shape is the row returned by a Postgrest query that
-    nested-selects `place:places(...)`. The nested key is popped and its
-    fields are written into `ai_data` (overriding the snapshot — `places`
-    is the source of truth for stable fields).
-    """
+    """Merge nested `place:places(...)` row into `ai_data` — `places` is source of truth for stable fields."""
     place = item.pop("place", None)
     if not place:
         return item
@@ -32,15 +26,8 @@ def hydrate_item(item: dict) -> dict:
     return item
 
 
-# ── Service functions ─────────────────────────────────────────────────────────
-
-
 async def create_item(plan_id: str, day_id: str, payload: dict) -> dict:
-    """Insert a new plan item and return the hydrated row.
-
-    Auto-assigns sort_key (fractional, for DnD) and sort_order (integer, for
-    transport-pair sequencing and cross-city slot anchoring) when missing.
-    """
+    """Auto-assigns sort_key (fractional, for DnD) and sort_order (integer, for transport-pair sequencing)."""
     supabase = get_supabase_client()
     fill = dict(payload)
     if fill.get("sort_key") is None or fill.get("sort_order") is None:
@@ -84,7 +71,6 @@ async def create_item(plan_id: str, day_id: str, payload: dict) -> dict:
 
 
 async def delete_item(item_id: str) -> None:
-    """Delete a plan item by id."""
     supabase = get_supabase_client()
     result = supabase.table("plan_items").delete().eq("id", item_id).execute()
     if not result.data:
@@ -92,7 +78,6 @@ async def delete_item(item_id: str) -> None:
 
 
 async def update_item_notes(item_id: str, notes: str | None) -> dict:
-    """Update the notes field of a plan item and return the updated row."""
     supabase = get_supabase_client()
     result = (
         supabase.table("plan_items")
@@ -117,15 +102,7 @@ async def update_item_notes(item_id: str, notes: str | None) -> dict:
 
 
 async def reorder_items(plan_id: str, entries: list[dict]) -> list[dict]:
-    """Apply a batch of (id, sort_key, day_id, destination_id) updates.
-
-    All ids must belong to plan_id. Returns the fresh rows for the touched items.
-
-    Side effect: deletes every transport item in any day touched by the reorder
-    (union of pre-move and post-move day_ids). Transport rows describe a hop
-    between specific adjacent items; once the order changes those pairings are
-    invalid. The user regenerates via the inline bar or cross-city panel.
-    """
+    """Side effect: deletes every transport item in any day touched by the reorder — transport rows describe a hop between specific adjacent items, so reorders invalidate the pairings."""
     if not entries:
         return []
     supabase = get_supabase_client()

@@ -1,13 +1,3 @@
-// Ajmo collab service — Hocuspocus Yjs WebSocket server.
-//
-// Per `collab/CLAUDE.md`:
-// - The collab service is the only writer of `plans.yjs_state` (FastAPI never touches it).
-// - Inbound websocket auth → POST /internal/collab/authorize on the backend.
-// - On every Y.Doc change → fire-and-forget POST /internal/collab/changed.
-// - Viewers connect read-only; their sync update messages are dropped server-side.
-// - Cold load (yjs_state IS NULL) → GET /internal/collab/seed?plan_id=... and
-//   apply the returned base64 update so the doc opens with current relational state.
-
 import { Server } from "@hocuspocus/server";
 import { Database } from "@hocuspocus/extension-database";
 import { Logger } from "@hocuspocus/extension-logger";
@@ -72,8 +62,7 @@ async function fetchSeed(planId: string): Promise<Uint8Array | null> {
 }
 
 function notifyChanged(planId: string, userId: string | null): void {
-  // Fire-and-forget — the backend debounces inside its own task; we don't
-  // want to slow down message broadcast on the websocket.
+  // Fire-and-forget — backend debounces inside its own task; awaiting would slow the websocket broadcast.
   undiciFetch(BACKEND_CHANGED_URL, {
     method: "POST",
     headers: {
@@ -121,9 +110,7 @@ const server = new Server({
     if (!result.ok) {
       throw new Error("unauthorised");
     }
-    // readOnly=true makes Hocuspocus drop SyncUpdate messages from this socket
-    // before they ever reach the doc — see Hocuspocus docs on the readOnly
-    // flag from onAuthenticate. Frontend mirrors this gating in the UI.
+    // readOnly=true makes Hocuspocus drop SyncUpdate messages from this socket before they reach the doc; frontend mirrors this gating in the UI.
     return {
       user: { id: result.userId, role: result.role },
       readOnly: result.role === "viewer",

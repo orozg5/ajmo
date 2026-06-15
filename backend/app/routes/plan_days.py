@@ -24,12 +24,10 @@ async def initialize_days_route(
     plan_id: str,
     current_user: str = Depends(get_current_user),
 ) -> list[PlanDayWithItemsResponse]:
-    """Idempotent setup: create days from the plan's date range if none exist.
-    Safe to call on every page load."""
+    """Idempotent — safe to call on every page load."""
     try:
         plan = await get_plan(plan_id)
         await initialize_days(plan_id, plan.get("date_from"), plan.get("date_to"))
-        # initialize_days returns days without items; fetch full view
         return await list_days_with_items(plan_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -43,7 +41,6 @@ async def list_days_route(
     plan_id: str,
     current_user: str = Depends(get_current_user),
 ) -> list[PlanDayWithItemsResponse]:
-    """Return all days for a plan with their items."""
     try:
         return await list_days_with_items(plan_id)
     except Exception:
@@ -57,11 +54,9 @@ async def create_day_route(
     body: PlanDayCreate,
     current_user: str = Depends(get_current_user),
 ) -> PlanDayWithItemsResponse:
-    """Add a new day to the plan. day_number auto-assigned if not provided."""
     try:
         day_number = body.day_number
         if day_number is None:
-            # Assign max + 1
             existing = await list_days_with_items(plan_id)
             day_number = (max((d["day_number"] for d in existing), default=0)) + 1
         return await create_day(plan_id, day_number, body.date)
@@ -79,7 +74,6 @@ async def update_day_route(
     body: PlanDayUpdate,
     current_user: str = Depends(get_current_user),
 ) -> dict:
-    """Update a day's title or notes."""
     try:
         patch = body.model_dump(exclude_unset=True)
         updated = await update_day(day_id, patch)
@@ -101,7 +95,7 @@ async def delete_day_route(
     day_id: str,
     current_user: str = Depends(get_current_user),
 ) -> Response:
-    """Delete a day and all its items (cascade)."""
+    """Cascade-deletes items."""
     try:
         await delete_day(day_id)
         return Response(status_code=204)

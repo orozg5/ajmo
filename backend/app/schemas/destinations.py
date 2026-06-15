@@ -4,9 +4,6 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 
-# ── Request models ─────────────────────────────────────────────────────────────
-
-
 class DestinationCreate(BaseModel):
     country: str
     city: str
@@ -19,9 +16,6 @@ class DestinationUpdate(BaseModel):
     city: str | None = None
     sort_order: int | None = None
     day_numbers: list[int] | None = None
-
-
-# ── Response models ────────────────────────────────────────────────────────────
 
 
 class DestinationResponse(BaseModel):

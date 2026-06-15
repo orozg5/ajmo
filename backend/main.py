@@ -62,7 +62,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register routers
 app.include_router(ai_router)
 app.include_router(places_router)
 app.include_router(plans_router)
@@ -86,5 +85,4 @@ app.include_router(collab_router)
 
 @app.get("/health", tags=["meta"])
 async def health_check() -> dict:
-    """Simple liveness probe."""
     return {"status": "ok"}

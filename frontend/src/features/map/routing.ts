@@ -13,13 +13,6 @@ export interface OsrmRouteResult {
   durationSeconds: number;
 }
 
-// Routes are resolved through the FastAPI backend (`POST /transit/osrm-route`)
-// rather than calling FOSSGIS directly: client-side OSRM is fragile under
-// browser DNS caches, hosts-file workarounds, and ad-block extensions, and
-// the public instance's 1-req/sec/host rate limit pairs badly with running
-// multiple <InlineTransportBar> instances at once. The backend retries
-// transient failures and shares the same OSRM client used by the cross-city
-// transport orchestrator.
 export async function fetchOsrmRoute(
   src: LatLng,
   dst: LatLng,

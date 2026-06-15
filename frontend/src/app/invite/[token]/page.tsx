@@ -16,8 +16,6 @@ export default async function InvitePage({ params }: InvitePageProps) {
     data: { session },
   } = await supabase.auth.getSession();
 
-  // Middleware already gates unauthenticated users to /login?next=…; this is
-  // a defensive fallback in case the matcher ever excludes /invite/.
   if (!session) {
     redirect(`/login?next=${encodeURIComponent(`/invite/${token}`)}`);
   }
@@ -31,8 +29,7 @@ export default async function InvitePage({ params }: InvitePageProps) {
   }
 
   if (result) {
-    // redirect throws NEXT_REDIRECT — must run outside the try/catch above so
-    // the framework can catch the special error.
+    // redirect throws NEXT_REDIRECT — must run outside the try/catch above.
     redirect(`/plans/${result.plan_id}`);
   }
 

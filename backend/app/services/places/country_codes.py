@@ -6,7 +6,6 @@ the geocode still runs, just without country filtering.
 """
 from __future__ import annotations
 
-# Alias forms keep the lookup forgiving: users type "USA" or "United States" or "us".
 COUNTRY_NAME_TO_CODE: dict[str, str] = {
     "united states": "us",
     "united states of america": "us",
@@ -123,11 +122,6 @@ COUNTRY_BBOX: dict[str, tuple[float, float, float, float]] = {
 
 
 def resolve_country_code(destination: str) -> str | None:
-    """Pull an ISO-2 country code out of a free-text destination.
-
-    Accepts "Manhattan, USA", "Paris, France", "Kyoto, Japan". Returns None
-    when no country token is recognised.
-    """
     if not destination:
         return None
     tokens = [t.strip().lower() for t in destination.split(",") if t.strip()]
@@ -139,11 +133,7 @@ def resolve_country_code(destination: str) -> str | None:
 
 
 def coord_in_country_bbox(lat: float, lng: float, country_code: str) -> bool:
-    """True if (lat, lng) sits inside the rough bbox for country_code.
-
-    Unknown country codes return True — we only reject when we *know* the coord
-    is outside. Better to accept a slightly off pin than drop a correct one.
-    """
+    """Unknown codes return True — only reject when we *know* the coord is outside, so a slightly off pin isn't dropped."""
     bbox = COUNTRY_BBOX.get(country_code.lower())
     if bbox is None:
         return True

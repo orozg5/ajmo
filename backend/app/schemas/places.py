@@ -4,9 +4,6 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 
-# ── Response models ────────────────────────────────────────────────────────────
-
-
 class PlaceSuggestionResponse(BaseModel):
     slug: str
     item_type: str

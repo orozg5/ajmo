@@ -6,9 +6,6 @@ from pydantic import BaseModel, Field, model_validator
 logger = logging.getLogger(__name__)
 
 
-# ── Enrichment ───────────────────────────────────────────────────────────────
-
-
 class EnrichmentResponse(BaseModel):
     """Structured output for /ai/enrich. All per-type volatile fields are optional."""
 
@@ -41,9 +38,6 @@ class EnrichmentResponse(BaseModel):
     categories: list[str] | None = Field(default=None, max_length=10)
 
 
-# ── Suggestions ──────────────────────────────────────────────────────────────
-
-
 SUGGESTION_ITEM_TYPES = ("attraction", "restaurant", "activity")
 
 
@@ -61,13 +55,7 @@ class SuggestionsResponse(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def drop_unsupported_types(cls, values):
-        """Filter hotel/transport before per-item validation.
-
-        The strip only shows attractions, restaurants, activities — hotels and
-        transport have their own dedicated UX. If the LLM (especially a small
-        local model) volunteers a hotel anyway, drop it silently rather than
-        failing the whole batch.
-        """
+        """Drop hotel/transport silently — they have their own UX and a stray LLM hotel shouldn't fail the whole batch."""
         if isinstance(values, dict):
             raw = values.get("suggestions") or []
             values["suggestions"] = [

@@ -24,9 +24,6 @@ class Settings(BaseSettings):
     COLLAB_SHARED_SECRET: str
     YJS_IDLE_MS: int
 
-    # `extra="ignore"` so removing a settings field doesn't break dev .env
-    # files that still carry the now-deprecated key. Required fields still
-    # error if missing.
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
@@ -34,11 +31,7 @@ settings = Settings()
 
 
 def chain_for_feature(feature: str) -> list[str]:
-    """Resolve the provider chain for a given AI feature.
-
-    Reads settings.AI_PROVIDER_CHAIN_<FEATURE>. Raises ValueError on unknown
-    feature names. No global fallback — each feature's chain env is required.
-    """
+    """Reads settings.AI_PROVIDER_CHAIN_<FEATURE>; raises ValueError on unknown feature names — no global fallback."""
     attr = f"AI_PROVIDER_CHAIN_{feature.upper()}"
     raw = getattr(settings, attr, None)
     if raw is None:

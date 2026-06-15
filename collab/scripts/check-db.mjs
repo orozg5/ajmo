@@ -1,9 +1,4 @@
-// Smoke-test the Postgres connection.
-// Default mode reads DATABASE_URL from collab/.env:
-//   node --env-file=.env scripts/check-db.mjs
-// Override mode lets you pass the password as a separate env var so URL
-// parsing and URL-encoding aren't a factor. Useful when DATABASE_URL fails:
-//   $env:DB_PASSWORD = "your-actual-password"; node --env-file=.env scripts/check-db.mjs
+// Smoke-test the Postgres connection. Override DB_PASSWORD env var to bypass URL parsing when DATABASE_URL fails.
 
 import pg from "pg";
 

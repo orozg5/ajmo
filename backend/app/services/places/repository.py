@@ -5,18 +5,8 @@ from app.db import get_supabase_client
 logger = logging.getLogger(__name__)
 
 
-# ── Places ────────────────────────────────────────────────────────────────────
-
-
 async def upsert_place(data: dict) -> dict | None:
-    """
-    Upsert a place into the permanent places table.
-    On conflict (slug, item_type) the existing row is left unchanged
-    (`ignore_duplicates=True`) — first write wins. The cache-miss path in
-    enrichment.py already short-circuits when the row exists, so this is a
-    safety net against double-writes from concurrent enrichments.
-    Failure is non-fatal — logged as warning, returns None.
-    """
+    """First-write-wins safety net against double-writes from concurrent enrichments. Non-fatal on failure."""
     supabase = get_supabase_client()
     try:
         response = (
@@ -41,10 +31,6 @@ async def upsert_place(data: dict) -> dict | None:
 
 
 async def autocomplete_places(q: str, destination: str, item_type: str) -> list[dict]:
-    """
-    Return up to 10 places whose name starts with q, scoped to destination + item_type.
-    Uses case-insensitive prefix match on the name column.
-    """
     supabase = get_supabase_client()
     response = (
         supabase.table("places")
@@ -58,14 +44,7 @@ async def autocomplete_places(q: str, destination: str, item_type: str) -> list[
     return response.data or []
 
 
-# ── Slug aliases ──────────────────────────────────────────────────────────────
-
-
 async def get_place_by_slug(slug: str, item_type: str) -> dict | None:
-    """
-    Fetch stable fields for a place by its canonical slug + item_type.
-    Returns None on miss or any DB error.
-    """
     supabase = get_supabase_client()
     try:
         result = (
@@ -83,11 +62,7 @@ async def get_place_by_slug(slug: str, item_type: str) -> dict | None:
 
 
 async def resolve_slug_alias(raw_slug: str) -> str | None:
-    """
-    Look up a raw input slug in the alias table.
-    Returns the canonical_slug string if found, otherwise None.
-    Any DB error (missing table, network issue) is caught and treated as a miss.
-    """
+    """DB errors treated as a miss."""
     supabase = get_supabase_client()
     try:
         result = (
@@ -106,11 +81,7 @@ async def resolve_slug_alias(raw_slug: str) -> str | None:
 
 
 async def store_slug_alias(raw_slug: str, canonical_slug: str) -> None:
-    """
-    Write a raw_slug → canonical_slug mapping into slug_aliases.
-    Upserts so re-running enrichment on the same input is idempotent.
-    Failure is non-fatal — logged as warning.
-    """
+    """Upsert so re-running enrichment is idempotent; non-fatal on failure."""
     supabase = get_supabase_client()
     try:
         supabase.table("slug_aliases").upsert(

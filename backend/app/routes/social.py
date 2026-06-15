@@ -1,17 +1,4 @@
-"""Routes for friendships, plan members, plan invites, comments, reactions,
-ratings, activity, and the invite redeem endpoint.
-
-Routers exported from this file (different URL prefixes):
-
-- friends_router         → /social/...
-- plan_members_router    → /plans/{plan_id}/members
-- plan_invites_router    → /plans/{plan_id}/invites
-- plan_comments_router   → /plans/{plan_id}/comments
-- plan_reactions_router  → /plans/{plan_id}/reactions and /plans/{plan_id}/items/{item_id}/reactions
-- plan_ratings_router    → /plans/{plan_id}/ratings   and /plans/{plan_id}/items/{item_id}/rating
-- plan_activity_router   → /plans/{plan_id}/activity
-- invite_router          → /invite/{token}/accept
-"""
+"""Routes for friendships, plan members, plan invites, comments, reactions, ratings, activity, and the invite redeem endpoint."""
 from __future__ import annotations
 
 import logging
@@ -95,9 +82,6 @@ plan_activity_router = APIRouter(prefix="/plans", tags=["social"])
 invite_router = APIRouter(prefix="/invite", tags=["social"])
 
 
-# ── Friend search ────────────────────────────────────────────────────────────
-
-
 @friends_router.get("/users/search")
 async def search_users_route(
     q: str = Query(..., min_length=1, max_length=64),
@@ -108,9 +92,6 @@ async def search_users_route(
     except Exception:
         logger.exception("Failed to search profiles for query %r", q)
         raise HTTPException(status_code=500, detail="Failed to search users")
-
-
-# ── Friendships ──────────────────────────────────────────────────────────────
 
 
 @friends_router.get("/friends")
@@ -218,9 +199,6 @@ async def unfriend_route(
         raise HTTPException(status_code=500, detail="Failed to remove friend")
 
 
-# ── Plan members ─────────────────────────────────────────────────────────────
-
-
 @plan_members_router.get("/{plan_id}/members")
 async def list_plan_members_route(
     plan_id: str,
@@ -303,9 +281,6 @@ async def remove_member_route(
         raise HTTPException(status_code=500, detail="Failed to remove member")
 
 
-# ── Plan invites ─────────────────────────────────────────────────────────────
-
-
 @plan_invites_router.get("/{plan_id}/invites")
 async def list_invites_route(
     plan_id: str,
@@ -363,9 +338,6 @@ async def revoke_invite_route(
         raise HTTPException(status_code=500, detail="Failed to revoke invite")
 
 
-# ── Invite redemption ────────────────────────────────────────────────────────
-
-
 @invite_router.post("/{token}/accept")
 async def accept_invite_route(
     token: str,
@@ -378,9 +350,6 @@ async def accept_invite_route(
     except Exception:
         logger.exception("Failed to accept invite %s", token)
         raise HTTPException(status_code=500, detail="Failed to accept invite")
-
-
-# ── Plan comments ────────────────────────────────────────────────────────────
 
 
 @plan_comments_router.get("/{plan_id}/comments")
@@ -459,9 +428,6 @@ async def delete_comment_route(
         raise HTTPException(status_code=500, detail="Failed to delete comment")
 
 
-# ── Plan-item reactions ──────────────────────────────────────────────────────
-
-
 @plan_reactions_router.get("/{plan_id}/reactions")
 async def list_reactions_route(
     plan_id: str,
@@ -519,9 +485,6 @@ async def remove_reaction_route(
         raise HTTPException(status_code=500, detail="Failed to remove reaction")
 
 
-# ── Plan-item ratings ────────────────────────────────────────────────────────
-
-
 @plan_ratings_router.get("/{plan_id}/ratings")
 async def list_ratings_route(
     plan_id: str,
@@ -572,9 +535,6 @@ async def delete_rating_route(
     except Exception:
         logger.exception("Failed to delete rating on item %s in plan %s", item_id, plan_id)
         raise HTTPException(status_code=500, detail="Failed to delete rating")
-
-
-# ── Plan activity feed ───────────────────────────────────────────────────────
 
 
 @plan_activity_router.get("/{plan_id}/activity")

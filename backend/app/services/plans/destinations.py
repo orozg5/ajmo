@@ -5,9 +5,6 @@ from app.db import get_supabase_client
 logger = logging.getLogger(__name__)
 
 
-# ── Service functions ─────────────────────────────────────────────────────────
-
-
 async def create_destination(
     plan_id: str,
     country: str,
@@ -15,7 +12,6 @@ async def create_destination(
     sort_order: int,
     day_numbers: list[int],
 ) -> dict:
-    """Insert a plan_destination row and its day assignments, return the created destination."""
     supabase = get_supabase_client()
     result = (
         supabase.table("plan_destinations")
@@ -35,7 +31,6 @@ async def create_destination(
 
 
 async def get_destinations_for_plan(plan_id: str) -> list[dict]:
-    """Return all destinations for a plan, each with a `days` list populated."""
     supabase = get_supabase_client()
     result = (
         supabase.table("plan_destinations")
@@ -65,7 +60,6 @@ async def update_destination(
     sort_order: int | None,
     day_numbers: list[int] | None,
 ) -> dict | None:
-    """Update destination fields and (optionally) replace its day assignments."""
     supabase = get_supabase_client()
 
     patch: dict = {}
@@ -117,7 +111,7 @@ async def update_destination(
 
 
 async def delete_destination(destination_id: str) -> None:
-    """Delete a destination; cascade removes day assignments and nulls plan_items.destination_id."""
+    """Cascade-deletes day assignments and nulls plan_items.destination_id."""
     supabase = get_supabase_client()
     result = (
         supabase.table("plan_destinations")

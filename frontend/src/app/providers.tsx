@@ -27,27 +27,13 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       }),
   );
 
-  // Persist only the queries that opt in via `meta: { persist: true }`. This
-  // hydrates the cache on cold load (so the plan workspace renders offline
-  // from the last known REST snapshot) and writes a debounced snapshot back
-  // on every meaningful change. Mount the subscription in an effect so SSR
-  // never touches IndexedDB.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    // The lower-level persist-client-core ships its own bundled query-core
-    // type, which doesn't structurally match the project's installed
-    // @tanstack/react-query (versions differ — 5.91 vs 5.99). The runtime
-    // shape is identical; cast the options to satisfy the type checker
-    // without forcing a version bump that would touch every other query
-    // call in the app.
+    // persist-client-core's bundled query-core types don't structurally match @tanstack/react-query 5.99 (it ships 5.91). Runtime shape is identical; cast through to avoid a version bump that would touch every query call.
     const options = {
       queryClient,
       persister: queryPersister,
-      // Bump if the on-disk shape changes incompatibly — old snapshots will
-      // be ignored rather than crash on hydration.
       buster: "ajmo-rq-v1",
-      // 24h on-disk lifetime — long enough to bridge most user gaps,
-      // short enough that stale plan listings get refreshed on next load.
       maxAge: 24 * 60 * 60 * 1000,
       dehydrateOptions: {
         shouldDehydrateQuery: (query: { meta?: Record<string, unknown> }) =>

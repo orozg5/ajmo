@@ -15,9 +15,6 @@ logger = logging.getLogger(__name__)
 TARGET_SUGGESTION_COUNT = 5
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
 def build_suggestions_prompt(
     destinations_str: str,
     item_names: list[str],
@@ -30,8 +27,6 @@ def build_suggestions_prompt(
     budget = prefs.get("budget") or "mid-range"
     notes = prefs.get("custom_notes") or "none"
 
-    # Merge "already planned" + "already suggested" into one exclusion list.
-    # Small models follow one clear instruction better than two overlapping ones.
     seen: set[str] = set()
     merged: list[str] = []
     for name in (item_names or []) + (exclude_names or []):
@@ -68,15 +63,7 @@ Rules:
 
 
 async def enrich_suggestion_metadata(suggestion: dict) -> dict:
-    """Zero-token cache check. Returns whatever stable data we have without
-    triggering Tavily/LLM/Pexels/Nominatim — frontend re-runs /ai/enrich-batch
-    for items where `cached` is False to fill in the volatile fields.
-
-    Lookup order: slug_aliases → ai_attraction_cache (volatile, 24h) → places
-    (permanent). We surface stable place data even on cache miss so the
-    suggestion card can render an image and description immediately while the
-    volatile-field refresh runs in the background.
-    """
+    """Zero-token cache check; returns `cached: False` when only stable place data is available so the frontend re-runs /ai/enrich-batch for volatile fields."""
     name = suggestion["name"]
     destination_city = suggestion.get("destination_city") or ""
     item_type = suggestion["item_type"]
@@ -117,9 +104,6 @@ def format_destinations(destinations: list[dict], fallback: str) -> tuple[str, s
     return fallback, None
 
 
-# ── plans.suggestions storage ─────────────────────────────────────────────────
-
-
 async def read_plan_suggestions(plan_id: str) -> list | None:
     supabase = get_supabase_client()
     result = (
@@ -137,9 +121,6 @@ async def read_plan_suggestions(plan_id: str) -> list | None:
 async def save_plan_suggestions(plan_id: str, suggestions: list) -> None:
     supabase = get_supabase_client()
     supabase.table("plans").update({"suggestions": suggestions}).eq("id", plan_id).execute()
-
-
-# ── LLM call ──────────────────────────────────────────────────────────────────
 
 
 async def call_llm_for_suggestions(
@@ -167,14 +148,7 @@ async def top_up_suggestions(
     cities: set[str] | None,
     destinations_str: str,
 ) -> list[dict]:
-    """Append fresh suggestions to `current` until count reaches the target.
-
-    Mirrors get_next_suggestion's retry schedule: bumps temperature on each
-    attempt and falls back to gemini if the local chain runs dry. Each retry
-    sends the union of itinerary items and already-collected names to the
-    LLM and post-filters by name and slug, since small local models routinely
-    ignore the prompt-level exclusion clause.
-    """
+    """Append fresh suggestions to `current` until count reaches the target; bumps temperature per attempt and falls back to gemini if the local chain runs dry."""
     if len(current) >= TARGET_SUGGESTION_COUNT:
         return current
 
@@ -238,9 +212,6 @@ async def top_up_suggestions(
     return current
 
 
-# ── Orchestrator ──────────────────────────────────────────────────────────────
-
-
 async def get_suggestions(
     plan_id: str,
     existing_item_names: list[str],
@@ -248,13 +219,7 @@ async def get_suggestions(
     force_refresh: bool = False,
     exclude_names: list[str] | None = None,
 ) -> list[dict]:
-    """Return AI suggestions. Reads plans.suggestions unless force_refresh.
-
-    The cache is filtered against `existing_item_names` on read — items the
-    user has since added (via +Add or manual search) are dropped before the
-    list is returned, so we never hand back something that's already in the
-    plan.
-    """
+    """Return AI suggestions, reading plans.suggestions unless force_refresh; cached entries are filtered against existing items on read."""
     existing_set = {name.lower() for name in existing_item_names}
 
     if not force_refresh:
@@ -298,9 +263,6 @@ async def get_suggestions(
     if cities is not None:
         suggestions = [s for s in suggestions if s.get("destination_city") in cities]
 
-    # Small local models routinely ignore the prompt-level exclusion clause and
-    # re-suggest items already in the itinerary. Drop them before enrichment to
-    # avoid wasted Tavily/LLM calls on items we'd discard anyway.
     skip_initial = {n.lower() for n in existing_item_names}
     if exclude_names:
         skip_initial |= {n.lower() for n in exclude_names}
@@ -310,11 +272,7 @@ async def get_suggestions(
         await asyncio.gather(*[enrich_suggestion_metadata(s) for s in suggestions])
     )
 
-    # Drop slug duplicates — slug_aliases can collapse two LLM-generated names
-    # ("Sacré-Cœur" and "Montmartre Sacré-Cœur") onto the same canonical slug.
-    # Without this, the strip would render two cards with the same React key
-    # AND the dedupe-by-slug logic in backfillSlot would silently remove
-    # placeholders for backfills that match an existing slug.
+    # slug_aliases can collapse two LLM names onto the same canonical slug; without this dedupe the strip renders duplicate React keys.
     deduped: list[dict] = []
     seen_slugs: set[str] = set()
     for item in enriched:
@@ -342,15 +300,7 @@ async def get_next_suggestion(
     *,
     exclude_slugs: list[str] | None = None,
 ) -> dict | None:
-    """Return one suggestion not in the plan, not in exclude_names, not in exclude_slugs.
-
-    `skip_names` is the union of `exclude_names` (frontend's current strip names)
-    and `existing_item_names` (everything in the plan). `skip_slugs` covers
-    canonical slugs the frontend is already showing — without this, two LLM-
-    generated names that resolve to the same canonical slug via slug_aliases
-    (e.g. "Sacré-Cœur" and "Montmartre Sacré-Cœur") would let the second one
-    through, and the frontend's slug-keyed dedupe drops it silently.
-    """
+    """Return one suggestion absent from the plan, exclude_names, and exclude_slugs (alias-collision guard against the frontend's slug-keyed dedupe silently dropping a result)."""
     saved = await read_plan_suggestions(plan_id)
     skip_names = {name.lower() for name in exclude_names} | {
         name.lower() for name in existing_item_names
@@ -380,11 +330,6 @@ async def get_next_suggestion(
     llm_exclude = list(skip_names)
     prompt = build_suggestions_prompt(destinations_str, existing_item_names, preferences, llm_exclude)
 
-    # Small local models (e.g. Ollama 4B) sometimes regurgitate excluded names
-    # when skip_names is large. Bump temperature on retry to encourage variety.
-    # If the chained provider still produces nothing fresh, force one final
-    # attempt against Gemini directly — it's far more likely to find a novel
-    # well-known place than a 4B local model.
     attempts: list[tuple[float, str | None]] = [(0.5, None), (0.85, None), (1.1, None), (0.7, "gemini")]
     primary_chain = ",".join(chain_for_feature("suggestions"))
     for attempt, (temp, provider_override) in enumerate(attempts):
@@ -406,9 +351,6 @@ async def get_next_suggestion(
             continue
         if cities is not None:
             new_suggestions = [s for s in new_suggestions if s.get("destination_city") in cities]
-        # Filter by name first (cheap), enrich the survivors (slug is assigned
-        # during enrichment), then filter by slug too — alias collisions only
-        # surface after enrichment populates the canonical slug.
         name_fresh = [s for s in new_suggestions if s.get("name", "").lower() not in skip_names]
         if not name_fresh:
             continue
@@ -440,13 +382,7 @@ async def stream_suggestions(
     existing_item_names: list[str],
     preferences: dict | None,
 ):
-    """Yield enriched suggestion dicts as they become available.
-
-    Cache hit: yields cached suggestions one at a time, skipping any whose
-    name now appears in `existing_item_names` (the user added them since the
-    cache was last written). Cache miss: streams from the LLM, emits each
-    item once the next one starts forming, persists the full list.
-    """
+    """Yield enriched suggestion dicts as they become available; cache miss emits each item once the next starts forming."""
     existing_set = {name.lower() for name in existing_item_names}
     saved = await read_plan_suggestions(plan_id)
     if saved is not None:

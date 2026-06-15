@@ -19,25 +19,17 @@ class ProfileSummary(BaseModel):
     avatar_url: str | None = None
 
 
-# ── Friendships ──────────────────────────────────────────────────────────────
-
-
 class FriendshipResponse(BaseModel):
     id: str
     requester_id: str
     addressee_id: str
     status: FriendshipStatus
     created_at: str
-    # The other party from the current user's perspective. The frontend renders
-    # this without needing to know which side the user is on.
     other: ProfileSummary
 
 
 class FriendRequestCreate(BaseModel):
     username: str = Field(..., min_length=1)
-
-
-# ── Plan members ─────────────────────────────────────────────────────────────
 
 
 class PlanMemberResponse(BaseModel):
@@ -55,9 +47,6 @@ class PlanMemberUpdate(BaseModel):
 class PlanMemberCreate(BaseModel):
     user_id: str
     role: InvitableRole = "viewer"
-
-
-# ── Plan invites ─────────────────────────────────────────────────────────────
 
 
 class PlanInviteResponse(BaseModel):
@@ -83,9 +72,6 @@ class InviteAcceptResponse(BaseModel):
     role: PlanRole
 
 
-# ── Comments ─────────────────────────────────────────────────────────────────
-
-
 class CommentResponse(BaseModel):
     id: str
     plan_id: str
@@ -109,9 +95,6 @@ class CommentUpdate(BaseModel):
     body: str = Field(..., min_length=1, max_length=4000)
 
 
-# ── Reactions ────────────────────────────────────────────────────────────────
-
-
 class ReactionResponse(BaseModel):
     plan_item_id: str
     user_id: str
@@ -121,9 +104,6 @@ class ReactionResponse(BaseModel):
 
 class ReactionCreate(BaseModel):
     kind: ReactionKind
-
-
-# ── Ratings ──────────────────────────────────────────────────────────────────
 
 
 class RatingResponse(BaseModel):
@@ -136,9 +116,6 @@ class RatingResponse(BaseModel):
 
 class RatingUpsert(BaseModel):
     stars: int = Field(..., ge=1, le=5)
-
-
-# ── Activity ─────────────────────────────────────────────────────────────────
 
 
 class ActivityResponse(BaseModel):
